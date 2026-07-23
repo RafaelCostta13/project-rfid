@@ -81,3 +81,4 @@ pytest
 
 Testes futuros que dependam de hardware serão marcados com `hardware` e não farão
 parte da execução padrão.
+# project-rfid
