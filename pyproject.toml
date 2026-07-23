@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rfid-reader"
+version = "0.1.0"
+description = "Base para comunicação com leitores RFID Zebra FX9600"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "python-dotenv>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10,<2.0",
+    "pytest>=8.2,<9.0",
+    "ruff>=0.5,<1.0",
+]
+
+[project.scripts]
+rfid-reader = "rfid_reader.cli:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "SIM", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not hardware'"
+markers = [
+    "hardware: testes que exigem um reader RFID físico",
+]
