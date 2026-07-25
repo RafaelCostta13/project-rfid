@@ -7,6 +7,7 @@ from rfid_reader.readers.base import ReaderConnectionError
 from rfid_reader.readers.zebra_fx9600 import (
     SllurpStateIds,
     ZebraFX9600Reader,
+    _create_client,
 )
 
 
@@ -21,11 +22,13 @@ class FakeMessage:
 class FakeLowLevelClient:
     def __init__(self) -> None:
         self.start_calls = 0
+        self.start_force_regen: list[bool] = []
         self.stop_calls = 0
         self.states: list[int] = []
 
-    def startInventory(self) -> None:
+    def startInventory(self, force_regen_rospec: bool = False) -> None:
         self.start_calls += 1
+        self.start_force_regen.append(force_regen_rospec)
 
     def stopPolitely(self, onCompletion: Callable[..., None] | None = None) -> None:
         self.stop_calls += 1
@@ -131,6 +134,12 @@ def test_connects_once_and_keeps_session_ready() -> None:
     assert client.connect_calls == 1
 
 
+def test_real_client_uses_gen2_session_zero_for_manual_restarts() -> None:
+    client, _ = _create_client("reader.local", 5084, 0.1, 1)
+
+    assert client.config.session == 0  # type: ignore[attr-defined]
+
+
 def test_connection_times_out_without_configuration_response() -> None:
     client = FakeSllurpClient(configure_on_connect=False)
     reader = create_reader(client, timeout=0.01)
@@ -163,6 +172,24 @@ def test_starts_only_one_inventory_and_preserves_received_epc() -> None:
     assert received[0].antenna_id == 1
     assert received[0].seen_count == 2
     assert client.llrp.start_calls == 1
+    assert client.llrp.start_force_regen == [True]
+
+
+def test_new_inventory_regenerates_rospec_and_delivers_same_epc_again() -> None:
+    client = FakeSllurpClient()
+    reader = create_reader(client)
+    received: list[TagRead] = []
+    reader.connect()
+
+    reader.start_inventory(received.append)
+    client.emit_tags([{"EPC": "EPC-01", "AntennaID": 1}])
+    reader.stop_inventory()
+
+    reader.start_inventory(received.append)
+    client.emit_tags([{"EPC": "EPC-01", "AntennaID": 1}])
+
+    assert [tag.epc for tag in received] == ["EPC-01", "EPC-01"]
+    assert client.llrp.start_force_regen == [True, True]
 
 
 def test_stop_removes_inventory_and_blocks_late_reports() -> None:

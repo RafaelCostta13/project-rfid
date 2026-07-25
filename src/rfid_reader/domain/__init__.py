@@ -8,6 +8,14 @@ from rfid_reader.domain.inventory import (
     InventoryStatusChanged,
     TagReceived,
 )
+from rfid_reader.domain.tag_lookup import (
+    TagLookupChanged,
+    TagLookupEvent,
+    TagLookupKey,
+    TagLookupResult,
+    TagLookupSessionStarted,
+    TagLookupStatus,
+)
 from rfid_reader.domain.tag_read import TagRead
 
 __all__ = [
@@ -19,4 +27,10 @@ __all__ = [
     "InventoryStatusChanged",
     "TagRead",
     "TagReceived",
+    "TagLookupChanged",
+    "TagLookupEvent",
+    "TagLookupKey",
+    "TagLookupResult",
+    "TagLookupSessionStarted",
+    "TagLookupStatus",
 ]

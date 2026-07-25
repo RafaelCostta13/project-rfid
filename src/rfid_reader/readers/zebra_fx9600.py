@@ -25,7 +25,7 @@ class SllurpMessage(Protocol):
 
 
 class SllurpLowLevelClient(Protocol):
-    def startInventory(self) -> object: ...
+    def startInventory(self, force_regen_rospec: bool = False) -> object: ...
 
     def stopPolitely(self, onCompletion: Callable[..., None] | None = None) -> object: ...
 
@@ -88,6 +88,7 @@ def _create_client(
             "reconnect": False,
             "keepalive_interval": 0,
             "report_every_n_tags": 1,
+            "session": 0,
         }
     )
     client = LLRPReaderClient(
@@ -227,7 +228,7 @@ class ZebraFX9600Reader:
             if client is None:
                 raise ReaderConnectionError("o reader não está conectado")
             try:
-                client.llrp.startInventory()
+                client.llrp.startInventory(force_regen_rospec=True)
             except Exception as error:
                 with self._lock:
                     self._inventory_requested = False

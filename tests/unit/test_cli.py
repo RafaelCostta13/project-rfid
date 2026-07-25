@@ -14,6 +14,7 @@ def valid_environment() -> dict[str, str]:
         "RFID_READER_NAME": "fx9600-test",
         "RFID_ANTENNAS": "1,2",
         "RFID_DEDUPLICATION_WINDOW_SECONDS": "2.0",
+        "SHAREPOINT_LOOKUP_URL": "https://example.test/lookup",
         "RFID_LOG_LEVEL": "INFO",
     }
 

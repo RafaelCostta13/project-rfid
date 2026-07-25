@@ -13,7 +13,9 @@ from rfid_reader.domain import (
     InventoryCleared,
     InventoryEvent,
     InventoryStatusChanged,
-    TagReceived,
+    TagLookupChanged,
+    TagLookupEvent,
+    TagLookupSessionStarted,
 )
 from rfid_reader.ui.components import (
     APP_BACKGROUND,
@@ -45,6 +47,7 @@ class MainWindow:
         self,
         updates: queue.SimpleQueue[tuple[ConnectionKind, ConnectionStatus]],
         inventory_updates: queue.SimpleQueue[InventoryEvent],
+        lookup_updates: queue.SimpleQueue[TagLookupEvent],
         on_close: Callable[[], None],
         on_start_inventory: Callable[[], object],
         on_stop_inventory: Callable[[], object],
@@ -55,6 +58,8 @@ class MainWindow:
     ) -> None:
         self._updates = updates
         self._inventory_updates = inventory_updates
+        self._lookup_updates = lookup_updates
+        self._lookup_session_id = 0
         self._on_close = on_close
         self._closing = False
         self._navigation = NavigationState()
@@ -111,6 +116,7 @@ class MainWindow:
                 break
             self._set_status(kind, status)
         self._drain_inventory_updates()
+        self._drain_lookup_updates()
         if not self._closing:
             self._root.after(100, self._drain_updates)
 
@@ -124,8 +130,20 @@ class MainWindow:
                 self._status_page.clear_tags()
             elif isinstance(event, InventoryStatusChanged):
                 self._status_page.set_inventory_status(event.status)
-            elif isinstance(event, TagReceived):
-                self._status_page.add_tag(event.tag)
+
+    def _drain_lookup_updates(self) -> None:
+        while True:
+            try:
+                event = self._lookup_updates.get_nowait()
+            except queue.Empty:
+                return
+            if isinstance(event, TagLookupSessionStarted):
+                self._lookup_session_id = event.session_id
+                self._status_page.clear_tags()
+            elif (
+                isinstance(event, TagLookupChanged) and event.session_id == self._lookup_session_id
+            ):
+                self._status_page.set_tag_lookup(event.key, event.result)
 
     def _set_status(self, kind: ConnectionKind, status: ConnectionStatus) -> None:
         self._connection_bar.set_status(kind, status)

@@ -10,6 +10,7 @@ def valid_environment() -> dict[str, str]:
         "RFID_READER_NAME": "fx9600-01",
         "RFID_ANTENNAS": "1",
         "RFID_DEDUPLICATION_WINDOW_SECONDS": "2.5",
+        "SHAREPOINT_LOOKUP_URL": "https://example.test/lookup",
         "RFID_LOG_LEVEL": "INFO",
     }
 
@@ -25,6 +26,9 @@ def test_loads_complete_valid_configuration_and_converts_types() -> None:
         deduplication_window_seconds=2.5,
         connection_timeout_seconds=3.0,
         status_check_interval_seconds=5.0,
+        sharepoint_lookup_url="https://example.test/lookup",
+        sharepoint_lookup_timeout_seconds=10.0,
+        sharepoint_lookup_queue_size=100,
         log_level="INFO",
     )
 
@@ -39,7 +43,12 @@ def test_loads_multiple_antennas_and_normalizes_duplicates() -> None:
 
 
 def test_uses_defaults_for_optional_values() -> None:
-    settings = load_config({"RFID_READER_HOST": "reader.local"})
+    settings = load_config(
+        {
+            "RFID_READER_HOST": "reader.local",
+            "SHAREPOINT_LOOKUP_URL": "https://example.test/lookup",
+        }
+    )
 
     assert settings.reader_port == 5084
     assert settings.reader_name == "fx9600-01"
@@ -47,6 +56,8 @@ def test_uses_defaults_for_optional_values() -> None:
     assert settings.deduplication_window_seconds == 2.0
     assert settings.connection_timeout_seconds == 3.0
     assert settings.status_check_interval_seconds == 5.0
+    assert settings.sharepoint_lookup_timeout_seconds == 10.0
+    assert settings.sharepoint_lookup_queue_size == 100
     assert settings.log_level == "INFO"
 
 
@@ -128,6 +139,35 @@ def test_rejects_empty_reader_name() -> None:
     ],
 )
 def test_rejects_invalid_connection_timing(variable: str, value: str) -> None:
+    environment = valid_environment()
+    environment[variable] = value
+
+    with pytest.raises(ConfigurationError, match=variable):
+        load_config(environment)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["", " ", "not-a-url", "http://example.test/lookup"],
+)
+def test_rejects_missing_or_invalid_sharepoint_url(url: str) -> None:
+    environment = valid_environment()
+    environment["SHAREPOINT_LOOKUP_URL"] = url
+
+    with pytest.raises(ConfigurationError, match="SHAREPOINT_LOOKUP_URL"):
+        load_config(environment)
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("SHAREPOINT_LOOKUP_TIMEOUT_SECONDS", "0"),
+        ("SHAREPOINT_LOOKUP_TIMEOUT_SECONDS", "invalid"),
+        ("SHAREPOINT_LOOKUP_QUEUE_SIZE", "0"),
+        ("SHAREPOINT_LOOKUP_QUEUE_SIZE", "1.5"),
+    ],
+)
+def test_rejects_invalid_sharepoint_limits(variable: str, value: str) -> None:
     environment = valid_environment()
     environment[variable] = value
 

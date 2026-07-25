@@ -7,6 +7,7 @@ import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 DEFAULT_READER_PORT = 5084
 DEFAULT_READER_NAME = "fx9600-01"
@@ -14,6 +15,8 @@ DEFAULT_ANTENNAS = (1,)
 DEFAULT_DEDUPLICATION_WINDOW_SECONDS = 2.0
 DEFAULT_CONNECTION_TIMEOUT_SECONDS = 3.0
 DEFAULT_STATUS_CHECK_INTERVAL_SECONDS = 5.0
+DEFAULT_SHAREPOINT_LOOKUP_TIMEOUT_SECONDS = 10.0
+DEFAULT_SHAREPOINT_LOOKUP_QUEUE_SIZE = 100
 DEFAULT_LOG_LEVEL = "INFO"
 KNOWN_LOG_LEVELS = frozenset(logging.getLevelNamesMapping())
 
@@ -33,6 +36,9 @@ class Settings:
     deduplication_window_seconds: float
     connection_timeout_seconds: float
     status_check_interval_seconds: float
+    sharepoint_lookup_url: str
+    sharepoint_lookup_timeout_seconds: float
+    sharepoint_lookup_queue_size: int
     log_level: str
 
 
@@ -67,6 +73,21 @@ def _reader_port(environment: Mapping[str, str]) -> int:
     if not 1 <= port <= 65535:
         raise ConfigurationError("RFID_READER_PORT deve estar entre 1 e 65535")
     return port
+
+
+def _required_https_url(environment: Mapping[str, str], variable: str) -> str:
+    value = _required_text(environment, variable)
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        raise ConfigurationError(f"{variable} deve conter uma URL HTTPS válida")
+    return value
+
+
+def _positive_integer(environment: Mapping[str, str], variable: str, default: int) -> int:
+    value = _integer(environment, variable, default)
+    if value <= 0:
+        raise ConfigurationError(f"{variable} deve ser um número inteiro maior que zero")
+    return value
 
 
 def _antennas(environment: Mapping[str, str]) -> tuple[int, ...]:
@@ -145,6 +166,17 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
             source,
             "RFID_STATUS_CHECK_INTERVAL_SECONDS",
             DEFAULT_STATUS_CHECK_INTERVAL_SECONDS,
+        ),
+        sharepoint_lookup_url=_required_https_url(source, "SHAREPOINT_LOOKUP_URL"),
+        sharepoint_lookup_timeout_seconds=_positive_float(
+            source,
+            "SHAREPOINT_LOOKUP_TIMEOUT_SECONDS",
+            DEFAULT_SHAREPOINT_LOOKUP_TIMEOUT_SECONDS,
+        ),
+        sharepoint_lookup_queue_size=_positive_integer(
+            source,
+            "SHAREPOINT_LOOKUP_QUEUE_SIZE",
+            DEFAULT_SHAREPOINT_LOOKUP_QUEUE_SIZE,
         ),
         log_level=_log_level(source),
     )

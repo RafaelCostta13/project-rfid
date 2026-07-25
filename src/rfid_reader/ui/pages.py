@@ -5,8 +5,16 @@ from __future__ import annotations
 import tkinter as tk
 from collections.abc import Callable
 from datetime import UTC, datetime
+from tkinter import ttk
 
-from rfid_reader.domain import ConnectionKind, ConnectionStatus, InventoryStatus, TagRead
+from rfid_reader.domain import (
+    ConnectionKind,
+    ConnectionStatus,
+    InventoryStatus,
+    TagLookupKey,
+    TagLookupResult,
+    TagLookupStatus,
+)
 from rfid_reader.ui.components import (
     APP_BACKGROUND,
     CONNECTION_NAMES,
@@ -15,6 +23,31 @@ from rfid_reader.ui.components import (
     TEXT_MUTED,
     TEXT_PRIMARY,
 )
+
+TAG_TABLE_HEADINGS = (
+    ("tag", "Tag"),
+    ("status", "Status"),
+    ("customer", "Cliente"),
+    ("invoice_number", "Nota fiscal"),
+    ("volume", "Volume"),
+    ("order_number", "Pedido"),
+    ("dock", "Doca"),
+)
+TAG_TABLE_COLUMNS = tuple(column for column, heading in TAG_TABLE_HEADINGS)
+
+
+def tag_lookup_values(result: TagLookupResult) -> tuple[str, ...]:
+    """Converte o modelo normalizado para a ordem visual da tabela."""
+
+    return (
+        result.tag,
+        result.status.value,
+        result.customer,
+        result.invoice_number,
+        result.volume,
+        result.order_number,
+        result.dock,
+    )
 
 
 class SystemStatusPage(tk.Frame):
@@ -35,7 +68,9 @@ class SystemStatusPage(tk.Frame):
         self._inventory_status_label: tk.Label
         self._start_button: tk.Button
         self._stop_button: tk.Button
-        self._tag_list: tk.Listbox
+        self._tag_table: ttk.Treeview
+        self._tag_rows: dict[TagLookupKey, str] = {}
+        self._next_tag_row = 0
         self._build(
             reader_name,
             reader_host,
@@ -193,21 +228,29 @@ class SystemStatusPage(tk.Frame):
         ).pack(anchor="w", pady=(0, 7))
         list_container = tk.Frame(inventory, background=HEADER_BACKGROUND)
         list_container.pack(fill="both", expand=True)
-        scrollbar = tk.Scrollbar(list_container, orient="vertical")
+        scrollbar = ttk.Scrollbar(list_container, orient="vertical")
         scrollbar.pack(side="right", fill="y")
-        self._tag_list = tk.Listbox(
+        self._tag_table = ttk.Treeview(
             list_container,
+            columns=TAG_TABLE_COLUMNS,
+            show="headings",
             yscrollcommand=scrollbar.set,
-            background="#F8FAFC",
-            foreground=TEXT_PRIMARY,
-            borderwidth=1,
-            relief="solid",
-            selectbackground="#DBEAFE",
-            selectforeground=TEXT_PRIMARY,
-            font=("Consolas", 10),
         )
-        self._tag_list.pack(side="left", fill="both", expand=True)
-        scrollbar.configure(command=self._tag_list.yview)
+        for column, heading in TAG_TABLE_HEADINGS:
+            self._tag_table.heading(column, text=heading)
+        self._tag_table.column("tag", width=180, minwidth=140, stretch=True)
+        self._tag_table.column("status", width=120, minwidth=110, stretch=False)
+        self._tag_table.column("customer", width=180, minwidth=130, stretch=True)
+        self._tag_table.column("invoice_number", width=110, minwidth=90, stretch=False)
+        self._tag_table.column("volume", width=80, minwidth=65, stretch=False)
+        self._tag_table.column("order_number", width=130, minwidth=100, stretch=False)
+        self._tag_table.column("dock", width=80, minwidth=65, stretch=False)
+        self._tag_table.tag_configure(TagLookupStatus.CONSULTING.value, foreground="#1D4ED8")
+        self._tag_table.tag_configure(TagLookupStatus.FOUND.value, foreground="#16803C")
+        self._tag_table.tag_configure(TagLookupStatus.NOT_FOUND.value, foreground="#B45309")
+        self._tag_table.tag_configure(TagLookupStatus.ERROR.value, foreground="#B42318")
+        self._tag_table.pack(side="left", fill="both", expand=True)
+        scrollbar.configure(command=self._tag_table.yview)
 
     @staticmethod
     def _detail(
@@ -269,13 +312,31 @@ class SystemStatusPage(tk.Frame):
     def clear_tags(self) -> None:
         """Remove todas as leituras da sessão anterior."""
 
-        self._tag_list.delete(0, tk.END)
+        rows = self._tag_table.get_children()
+        if rows:
+            self._tag_table.delete(*rows)
+        self._tag_rows.clear()
+        self._next_tag_row = 0
 
-    def add_tag(self, tag: TagRead) -> None:
-        """Adiciona um EPC e mantém a leitura mais recente visível."""
+    def set_tag_lookup(self, key: TagLookupKey, result: TagLookupResult) -> None:
+        """Inclui ou atualiza o resultado associado à etiqueta correta."""
 
-        self._tag_list.insert(tk.END, tag.epc)
-        self._tag_list.see(tk.END)
+        values = tag_lookup_values(result)
+        row_id = self._tag_rows.get(key)
+        if row_id is None:
+            self._next_tag_row += 1
+            row_id = f"tag-{self._next_tag_row}"
+            self._tag_rows[key] = row_id
+            self._tag_table.insert(
+                "",
+                tk.END,
+                iid=row_id,
+                values=values,
+                tags=(result.status.value,),
+            )
+        else:
+            self._tag_table.item(row_id, values=values, tags=(result.status.value,))
+        self._tag_table.see(row_id)
 
 
 class RFIDSettingsPlaceholderPage(tk.Frame):
