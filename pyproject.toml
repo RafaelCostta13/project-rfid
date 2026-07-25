@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "python-dotenv>=1.0,<2.0",
+    "sllurp>=3.0.5,<4.0",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +41,10 @@ indent-style = "space"
 python_version = "3.12"
 strict = true
 files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["sllurp", "sllurp.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

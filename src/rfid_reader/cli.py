@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 
 from dotenv import load_dotenv
 
+from rfid_reader.application import ApplicationError, run_application
 from rfid_reader.config import ConfigurationError, Settings, load_config
 
 
@@ -15,6 +16,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rfid-reader")
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("check-config", help="valida a configuração local")
+    subcommands.add_parser("show", help="abre a tela principal")
     return parser
 
 
@@ -34,15 +36,23 @@ def main(
     """Executa a CLI e retorna um código de saída."""
 
     arguments = _parser().parse_args(argv)
+    if environment is None:
+        load_dotenv()
+    try:
+        settings = load_config(environment)
+    except ConfigurationError as error:
+        print(f"Erro de configuração: {error}", file=sys.stderr)
+        return 2
+
     if arguments.command == "check-config":
-        if environment is None:
-            load_dotenv()
-        try:
-            settings = load_config(environment)
-        except ConfigurationError as error:
-            print(f"Erro de configuração: {error}", file=sys.stderr)
-            return 2
         _print_summary(settings)
+        return 0
+    if arguments.command == "show":
+        try:
+            run_application(settings)
+        except ApplicationError as error:
+            print(f"Erro ao iniciar aplicação: {error}", file=sys.stderr)
+            return 1
         return 0
     return 1
 

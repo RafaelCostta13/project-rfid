@@ -23,6 +23,8 @@ def test_loads_complete_valid_configuration_and_converts_types() -> None:
         reader_name="fx9600-01",
         antennas=(1,),
         deduplication_window_seconds=2.5,
+        connection_timeout_seconds=3.0,
+        status_check_interval_seconds=5.0,
         log_level="INFO",
     )
 
@@ -43,6 +45,8 @@ def test_uses_defaults_for_optional_values() -> None:
     assert settings.reader_name == "fx9600-01"
     assert settings.antennas == (1,)
     assert settings.deduplication_window_seconds == 2.0
+    assert settings.connection_timeout_seconds == 3.0
+    assert settings.status_check_interval_seconds == 5.0
     assert settings.log_level == "INFO"
 
 
@@ -111,4 +115,21 @@ def test_rejects_empty_reader_name() -> None:
     environment["RFID_READER_NAME"] = " "
 
     with pytest.raises(ConfigurationError, match="RFID_READER_NAME"):
+        load_config(environment)
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("RFID_CONNECTION_TIMEOUT_SECONDS", "0"),
+        ("RFID_CONNECTION_TIMEOUT_SECONDS", "invalid"),
+        ("RFID_STATUS_CHECK_INTERVAL_SECONDS", "-1"),
+        ("RFID_STATUS_CHECK_INTERVAL_SECONDS", "nan"),
+    ],
+)
+def test_rejects_invalid_connection_timing(variable: str, value: str) -> None:
+    environment = valid_environment()
+    environment[variable] = value
+
+    with pytest.raises(ConfigurationError, match=variable):
         load_config(environment)

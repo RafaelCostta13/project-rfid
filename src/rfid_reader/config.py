@@ -12,6 +12,8 @@ DEFAULT_READER_PORT = 5084
 DEFAULT_READER_NAME = "fx9600-01"
 DEFAULT_ANTENNAS = (1,)
 DEFAULT_DEDUPLICATION_WINDOW_SECONDS = 2.0
+DEFAULT_CONNECTION_TIMEOUT_SECONDS = 3.0
+DEFAULT_STATUS_CHECK_INTERVAL_SECONDS = 5.0
 DEFAULT_LOG_LEVEL = "INFO"
 KNOWN_LOG_LEVELS = frozenset(logging.getLevelNamesMapping())
 
@@ -29,6 +31,8 @@ class Settings:
     reader_name: str
     antennas: tuple[int, ...]
     deduplication_window_seconds: float
+    connection_timeout_seconds: float
+    status_check_interval_seconds: float
     log_level: str
 
 
@@ -98,6 +102,17 @@ def _deduplication_window(environment: Mapping[str, str]) -> float:
     return window
 
 
+def _positive_float(environment: Mapping[str, str], variable: str, default: float) -> float:
+    raw_value = environment.get(variable, str(default)).strip()
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise ConfigurationError(f"{variable} deve ser um número") from error
+    if not math.isfinite(value) or value <= 0:
+        raise ConfigurationError(f"{variable} deve ser um número finito maior que zero")
+    return value
+
+
 def _log_level(environment: Mapping[str, str]) -> str:
     variable = "RFID_LOG_LEVEL"
     level = environment.get(variable, DEFAULT_LOG_LEVEL).strip().upper()
@@ -121,5 +136,15 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
         ),
         antennas=_antennas(source),
         deduplication_window_seconds=_deduplication_window(source),
+        connection_timeout_seconds=_positive_float(
+            source,
+            "RFID_CONNECTION_TIMEOUT_SECONDS",
+            DEFAULT_CONNECTION_TIMEOUT_SECONDS,
+        ),
+        status_check_interval_seconds=_positive_float(
+            source,
+            "RFID_STATUS_CHECK_INTERVAL_SECONDS",
+            DEFAULT_STATUS_CHECK_INTERVAL_SECONDS,
+        ),
         log_level=_log_level(source),
     )
