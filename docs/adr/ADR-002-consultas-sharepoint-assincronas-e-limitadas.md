@@ -3,6 +3,8 @@
 - Status: Aceita
 - Data: 2026-07-25
 - Funcionalidades relacionadas: RF004, RF005 e RF006
+- Substituição parcial: a ADR-006 remove a apresentação ASCII e restringe a
+  tabela e o resumo visual aos resultados encontrados.
 
 ## Contexto
 
@@ -101,9 +103,9 @@ selecionará `body` quando ele estiver presente e continuará aceitando o format
 anterior na raiz. Um `body` presente que não seja objeto será considerado erro
 de contrato.
 
-Os valores `true`, `"true"`, `"True"`, `1` e `"1"` representam sucesso.
-Demais valores representam uma etiqueta não encontrada quando o restante do
-contrato for válido.
+Os valores aceitos para `sucesso` e sua classificação foram posteriormente
+restringidos pela ADR-005. Valores fora do contrato explícito deixaram de
+representar automaticamente uma etiqueta não encontrada.
 
 Os campos complementares `cliente`, `notaFiscal`, `pedido`, `volume` e `doca`
 serão normalizados pelo cliente HTTP para nomes internos em inglês. Ausência ou
@@ -264,7 +266,7 @@ FX9600.
   ambiente validadas;
 - consultas são executadas por um worker e uma fila limitada, sem bloquear o
   callback do LLRP;
-- cada leitura recebe os estados `Consultando`, `Encontrada`, `Não encontrada`
+- cada leitura recebe os estados `Consultando`, `Encontrada`, `Não encontrado`
   ou `Erro`;
 - respostas HTTP, JSON e EPC divergente são validados antes de atualizar a
   interface;

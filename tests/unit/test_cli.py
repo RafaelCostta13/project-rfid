@@ -1,4 +1,5 @@
 import socket
+from pathlib import Path
 
 import pytest
 
@@ -44,7 +45,7 @@ def test_check_config_returns_error_for_invalid_configuration(
     assert exit_code != 0
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "RFID_READER_HOST" in captured.err
+    assert "SHAREPOINT_LOOKUP_URL" in captured.err
 
 
 def test_check_config_does_not_access_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,26 +59,30 @@ def test_check_config_does_not_access_network(monkeypatch: pytest.MonkeyPatch) -
 
 def test_show_opens_application_with_validated_settings(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    received: list[Settings] = []
+    received: list[tuple[Settings, Path]] = []
 
-    def fake_run_application(settings: Settings) -> None:
-        received.append(settings)
+    def fake_run_application(settings: Settings, path: Path) -> None:
+        received.append((settings, path))
 
     monkeypatch.setattr(cli, "run_application", fake_run_application)
+    configuration_path = tmp_path / ".env"
 
-    assert main(["show"], valid_environment()) == 0
-    assert received[0].reader_host == "reader.local"
+    assert main(["show"], valid_environment(), configuration_path) == 0
+    assert received[0][0].reader_host == "reader.local"
+    assert received[0][1] == configuration_path
 
 
 def test_show_reports_application_start_error(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
-    def fail_to_start(settings: Settings) -> None:
+    def fail_to_start(settings: Settings, path: Path) -> None:
         raise cli.ApplicationError("interface indisponível")
 
     monkeypatch.setattr(cli, "run_application", fail_to_start)
 
-    assert main(["show"], valid_environment()) == 1
+    assert main(["show"], valid_environment(), tmp_path / ".env") == 1
     assert "interface indisponível" in capsys.readouterr().err

@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from rfid_reader.application import ApplicationError, run_application
 from rfid_reader.config import ConfigurationError, Settings, load_config
@@ -32,12 +33,20 @@ def _print_summary(settings: Settings) -> None:
 def main(
     argv: Sequence[str] | None = None,
     environment: Mapping[str, str] | None = None,
+    configuration_path: Path | None = None,
 ) -> int:
     """Executa a CLI e retorna um código de saída."""
 
     arguments = _parser().parse_args(argv)
+    path = configuration_path
+    if path is None:
+        if environment is None:
+            discovered = find_dotenv(usecwd=True)
+            path = Path(discovered) if discovered else Path.cwd() / ".env"
+        else:
+            path = Path.cwd() / ".env"
     if environment is None:
-        load_dotenv()
+        load_dotenv(dotenv_path=path)
     try:
         settings = load_config(environment)
     except ConfigurationError as error:
@@ -49,7 +58,7 @@ def main(
         return 0
     if arguments.command == "show":
         try:
-            run_application(settings)
+            run_application(settings, path)
         except ApplicationError as error:
             print(f"Erro ao iniciar aplicação: {error}", file=sys.stderr)
             return 1

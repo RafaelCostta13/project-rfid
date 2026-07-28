@@ -19,8 +19,6 @@ O primeiro objetivo do projeto é implementar apenas as operações fundamentais
 
 O protocolo inicial de comunicação será **LLRP**.
 
-Não implementar interface web, aplicativo, banco de dados, integração com WMS/SAP, GPIO, sensores, escrita de tags ou regras de portal sem uma funcionalidade específica solicitando isso.
-
 ---
 
 ## 2. Objetivo do MVP

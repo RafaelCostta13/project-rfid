@@ -34,7 +34,11 @@ class ReaderError(RuntimeError):
 
 
 class ReaderConnectionError(ReaderError):
-    """Falha de transporte ou timeout ao conectar."""
+    """Falha de transporte ao conectar."""
+
+
+class ReaderTimeoutError(ReaderConnectionError):
+    """Tempo limite excedido durante uma operação com o reader."""
 
 
 class ReaderProtocolError(ReaderError):

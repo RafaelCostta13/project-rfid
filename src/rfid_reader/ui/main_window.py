@@ -13,9 +13,12 @@ from rfid_reader.domain import (
     InventoryCleared,
     InventoryEvent,
     InventoryStatusChanged,
+    ReaderConfigurationFeedback,
+    ReaderConnectionSettings,
     TagLookupChanged,
     TagLookupEvent,
     TagLookupSessionStarted,
+    TagLookupSessionSummary,
 )
 from rfid_reader.ui.components import (
     APP_BACKGROUND,
@@ -25,7 +28,7 @@ from rfid_reader.ui.components import (
     Sidebar,
 )
 from rfid_reader.ui.navigation import NavigationState, PageId
-from rfid_reader.ui.pages import RFIDSettingsPlaceholderPage, SystemStatusPage
+from rfid_reader.ui.pages import RFIDSettingsPage, SystemStatusPage
 
 
 def maximize_window(root: tk.Tk) -> None:
@@ -48,19 +51,22 @@ class MainWindow:
         updates: queue.SimpleQueue[tuple[ConnectionKind, ConnectionStatus]],
         inventory_updates: queue.SimpleQueue[InventoryEvent],
         lookup_updates: queue.SimpleQueue[TagLookupEvent],
+        configuration_updates: queue.SimpleQueue[ReaderConfigurationFeedback],
         on_close: Callable[[], None],
         on_start_inventory: Callable[[], object],
         on_stop_inventory: Callable[[], object],
-        *,
-        reader_name: str,
-        reader_host: str,
-        reader_port: int,
+        get_reader_settings: Callable[[], ReaderConnectionSettings],
+        on_test_connection: Callable[[str, str, str], object],
+        on_save_configuration: Callable[[str, str, str], object],
     ) -> None:
         self._updates = updates
         self._inventory_updates = inventory_updates
         self._lookup_updates = lookup_updates
+        self._configuration_updates = configuration_updates
         self._lookup_session_id = 0
+        self._lookup_summary = TagLookupSessionSummary()
         self._on_close = on_close
+        self._get_reader_settings = get_reader_settings
         self._closing = False
         self._navigation = NavigationState()
         self._root = tk.Tk()
@@ -83,13 +89,15 @@ class MainWindow:
         self._content.grid(row=2, column=1, sticky="nsew")
         self._status_page = SystemStatusPage(
             self._content,
-            reader_name,
-            reader_host,
-            reader_port,
             on_start_inventory,
             on_stop_inventory,
         )
-        self._settings_page = RFIDSettingsPlaceholderPage(self._content)
+        self._settings_page = RFIDSettingsPage(
+            self._content,
+            get_reader_settings(),
+            on_test_connection,
+            on_save_configuration,
+        )
         self._content.add_page(
             PageId.SYSTEM_STATUS,
             self._status_page,
@@ -106,6 +114,8 @@ class MainWindow:
     def _select_page(self, page: PageId) -> None:
         self._navigation.select(page)
         self._sidebar.select(page)
+        if page is PageId.RFID_SETTINGS:
+            self._settings_page.set_settings(self._get_reader_settings())
         self._content.show(page)
 
     def _drain_updates(self) -> None:
@@ -117,6 +127,7 @@ class MainWindow:
             self._set_status(kind, status)
         self._drain_inventory_updates()
         self._drain_lookup_updates()
+        self._drain_configuration_updates()
         if not self._closing:
             self._root.after(100, self._drain_updates)
 
@@ -127,7 +138,7 @@ class MainWindow:
             except queue.Empty:
                 return
             if isinstance(event, InventoryCleared):
-                self._status_page.clear_tags()
+                self._reset_lookup_view()
             elif isinstance(event, InventoryStatusChanged):
                 self._status_page.set_inventory_status(event.status)
 
@@ -139,15 +150,29 @@ class MainWindow:
                 return
             if isinstance(event, TagLookupSessionStarted):
                 self._lookup_session_id = event.session_id
-                self._status_page.clear_tags()
+                self._reset_lookup_view()
             elif (
                 isinstance(event, TagLookupChanged) and event.session_id == self._lookup_session_id
             ):
-                self._status_page.set_tag_lookup(event.key, event.result)
+                if self._lookup_summary.update(event.result):
+                    self._status_page.set_tag_lookup(event.result)
+                    self._status_page.set_summary(self._lookup_summary.total)
+
+    def _reset_lookup_view(self) -> None:
+        self._lookup_summary.reset()
+        self._status_page.clear_tags()
+        self._status_page.set_summary(self._lookup_summary.total)
+
+    def _drain_configuration_updates(self) -> None:
+        while True:
+            try:
+                event = self._configuration_updates.get_nowait()
+            except queue.Empty:
+                return
+            self._settings_page.apply_feedback(event)
 
     def _set_status(self, kind: ConnectionKind, status: ConnectionStatus) -> None:
         self._connection_bar.set_status(kind, status)
-        self._status_page.set_status(kind, status)
 
     def _close(self) -> None:
         if self._closing:

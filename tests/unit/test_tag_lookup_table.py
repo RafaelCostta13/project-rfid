@@ -1,10 +1,68 @@
 from rfid_reader.domain import TagLookupResult, TagLookupStatus
-from rfid_reader.ui.pages import TAG_TABLE_COLUMNS, TAG_TABLE_HEADINGS, tag_lookup_values
+from rfid_reader.ui.pages import (
+    START_PAGE_TITLE,
+    SUMMARY_CARD_TITLE,
+    TAG_TABLE_COLUMNS,
+    TAG_TABLE_HEADINGS,
+    SystemStatusPage,
+    tag_lookup_values,
+)
 
 
-def test_table_has_required_columns_in_exact_order() -> None:
+class RecordingLabel:
+    def __init__(self) -> None:
+        self.text = ""
+
+    def configure(self, *, text: str) -> None:
+        self.text = text
+
+
+class RecordingTable:
+    def __init__(self) -> None:
+        self.insertions: list[str] = []
+        self.updates: list[str] = []
+
+    def insert(
+        self,
+        parent: str,
+        index: str,
+        *,
+        iid: str,
+        values: tuple[str, ...],
+        tags: tuple[str, ...],
+    ) -> None:
+        self.insertions.append(iid)
+
+    def item(
+        self,
+        iid: str,
+        *,
+        values: tuple[str, ...],
+        tags: tuple[str, ...],
+    ) -> None:
+        self.updates.append(iid)
+
+    def see(self, iid: str) -> None:
+        pass
+
+
+def test_start_page_exposes_only_found_summary_card() -> None:
+    assert START_PAGE_TITLE == "Start"
+    assert SUMMARY_CARD_TITLE == "EPCs encontrados"
+
+
+def test_summary_label_renders_found_total() -> None:
+    page = object.__new__(SystemStatusPage)
+    found_label = RecordingLabel()
+    page._found_count_label = found_label
+
+    page.set_summary(15)
+
+    assert found_label.text == "15"
+
+
+def test_table_removes_tag_and_keeps_remaining_columns_in_exact_order() -> None:
     assert TAG_TABLE_COLUMNS == (
-        "tag",
         "status",
         "customer",
         "invoice_number",
@@ -13,7 +71,6 @@ def test_table_has_required_columns_in_exact_order() -> None:
         "dock",
     )
     assert tuple(heading for column, heading in TAG_TABLE_HEADINGS) == (
-        "Tag",
         "Status",
         "Cliente",
         "Nota fiscal",
@@ -23,31 +80,11 @@ def test_table_has_required_columns_in_exact_order() -> None:
     )
 
 
-def test_consulting_row_keeps_additional_cells_empty() -> None:
-    result = TagLookupResult(
-        "484C44303130313237353835",
-        TagLookupStatus.CONSULTING,
-        "",
-        tag="HLD010127585",
-    )
-
-    assert tag_lookup_values(result) == (
-        "HLD010127585",
-        "Consultando",
-        "",
-        "",
-        "",
-        "",
-        "",
-    )
-
-
 def test_found_row_uses_normalized_model_and_not_the_diagnostic_message() -> None:
     result = TagLookupResult(
-        epc="EPC-01",
+        epc="484C443031",
         status=TagLookupStatus.FOUND,
         message="Mensagem mantida apenas no modelo",
-        tag="TAG-01",
         customer="Cliente 01",
         invoice_number="00127",
         order_number="00099",
@@ -57,7 +94,6 @@ def test_found_row_uses_normalized_model_and_not_the_diagnostic_message() -> Non
 
     assert result.message == "Mensagem mantida apenas no modelo"
     assert tag_lookup_values(result) == (
-        "TAG-01",
         "Encontrada",
         "Cliente 01",
         "00127",
@@ -67,33 +103,40 @@ def test_found_row_uses_normalized_model_and_not_the_diagnostic_message() -> Non
     )
 
 
-def test_error_row_does_not_show_error_message_in_data_columns() -> None:
-    result = TagLookupResult(
-        "EPC-ERROR",
-        TagLookupStatus.ERROR,
-        "Não foi possível consultar a etiqueta.",
-        tag="Tag inválida",
-    )
-
-    assert tag_lookup_values(result) == (
-        "Tag inválida",
-        "Erro",
-        "",
-        "",
-        "",
-        "",
-        "",
-    )
-
-
 def test_epc_remains_internal_and_is_not_part_of_visual_values() -> None:
     epc = "484C44303130313237353835"
     result = TagLookupResult(
         epc,
         TagLookupStatus.FOUND,
         "Encontrada",
-        tag="HLD010127585",
     )
 
     assert result.epc == epc
     assert epc not in tag_lookup_values(result)
+
+
+def test_repeated_found_epc_updates_one_visual_row() -> None:
+    page = object.__new__(SystemStatusPage)
+    table = RecordingTable()
+    page._tag_table = table
+    page._tag_rows = {}
+    page._next_tag_row = 0
+    first = TagLookupResult(
+        "484C443031",
+        TagLookupStatus.FOUND,
+        "Encontrada",
+        customer="Cliente inicial",
+    )
+    updated = TagLookupResult(
+        "484C443031",
+        TagLookupStatus.FOUND,
+        "Encontrada",
+        customer="Cliente atualizado",
+    )
+
+    page.set_tag_lookup(first)
+    page.set_tag_lookup(updated)
+
+    assert table.insertions == ["tag-1"]
+    assert table.updates == ["tag-1"]
+    assert page._tag_rows == {"484C443031": "tag-1"}

@@ -134,6 +134,44 @@ def test_connects_once_and_keeps_session_ready() -> None:
     assert client.connect_calls == 1
 
 
+def test_saved_connection_values_are_used_only_after_next_connect() -> None:
+    first_client = FakeSllurpClient()
+    second_client = FakeSllurpClient()
+    clients = iter((first_client, second_client))
+    factory_calls: list[tuple[str, int, float, int]] = []
+
+    def factory(
+        host: str,
+        port: int,
+        timeout_seconds: float,
+        antenna: int,
+    ) -> tuple[FakeSllurpClient, SllurpStateIds]:
+        factory_calls.append((host, port, timeout_seconds, antenna))
+        return next(clients), SllurpStateIds(connected=3, inventorying=18)
+
+    reader = ZebraFX9600Reader(
+        "192.168.0.100",
+        5084,
+        "reader-original",
+        1,
+        0.1,
+        client_factory=factory,
+    )
+    reader.connect()
+
+    reader.configure_connection("192.168.0.214", 6000, "reader-novo")
+
+    assert first_client.is_alive()
+    assert second_client.connect_calls == 0
+    assert factory_calls == [("192.168.0.100", 5084, 0.1, 1)]
+
+    reader.disconnect()
+    reader.connect()
+
+    assert factory_calls[-1] == ("192.168.0.214", 6000, 0.1, 1)
+    assert second_client.connect_calls == 1
+
+
 def test_real_client_uses_gen2_session_zero_for_manual_restarts() -> None:
     client, _ = _create_client("reader.local", 5084, 0.1, 1)
 

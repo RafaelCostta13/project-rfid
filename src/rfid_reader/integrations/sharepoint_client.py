@@ -69,14 +69,21 @@ def _urllib_transport(request: Request, timeout_seconds: float) -> HttpResponse:
         raise TagLookupClientError("falha de rede na consulta") from error
 
 
-def _is_success(value: object) -> bool:
+def _normalize_success(value: object) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, int):
-        return value == 1
+        if value == 1:
+            return True
+        if value == 0:
+            return False
     if isinstance(value, str):
-        return value.strip().lower() in {"true", "1"}
-    return False
+        normalized = value.strip().lower()
+        if normalized in {"true", "1"}:
+            return True
+        if normalized in {"false", "0"}:
+            return False
+    raise TagLookupResponseError("o campo 'sucesso' deve ser booleano")
 
 
 def _lookup_payload(document: dict[str, object]) -> dict[str, object]:
@@ -146,7 +153,7 @@ class SharePointLookupClient:
         if response_epc != epc:
             raise TagLookupResponseError("EPC retornado diverge do EPC consultado")
 
-        found = _is_success(payload["sucesso"])
+        found = _normalize_success(payload["sucesso"])
         return TagLookupResult(
             epc=epc,
             status=TagLookupStatus.FOUND if found else TagLookupStatus.NOT_FOUND,

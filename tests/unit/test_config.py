@@ -1,6 +1,13 @@
 import pytest
 
-from rfid_reader.config import ConfigurationError, Settings, load_config
+from rfid_reader.config import (
+    ConfigurationError,
+    ReaderConfigurationValidationError,
+    Settings,
+    load_config,
+    validate_reader_connection,
+)
+from rfid_reader.domain import ReaderConnectionSettings
 
 
 def valid_environment() -> dict[str, str]:
@@ -45,11 +52,11 @@ def test_loads_multiple_antennas_and_normalizes_duplicates() -> None:
 def test_uses_defaults_for_optional_values() -> None:
     settings = load_config(
         {
-            "RFID_READER_HOST": "reader.local",
             "SHAREPOINT_LOOKUP_URL": "https://example.test/lookup",
         }
     )
 
+    assert settings.reader_host == "192.168.0.214"
     assert settings.reader_port == 5084
     assert settings.reader_name == "fx9600-01"
     assert settings.antennas == (1,)
@@ -127,6 +134,39 @@ def test_rejects_empty_reader_name() -> None:
 
     with pytest.raises(ConfigurationError, match="RFID_READER_NAME"):
         load_config(environment)
+
+
+def test_validates_and_normalizes_reader_form_fields() -> None:
+    assert validate_reader_connection(
+        "  Reader Doca 01  ",
+        "  reader-doca-01  ",
+        " 5084 ",
+    ) == ReaderConnectionSettings(
+        name="Reader Doca 01",
+        host="reader-doca-01",
+        port=5084,
+    )
+
+
+@pytest.mark.parametrize("name", ["", "   ", "Reader\nInjetado", "Reader ${INJETADO}"])
+def test_rejects_invalid_reader_form_name(name: str) -> None:
+    with pytest.raises(ReaderConfigurationValidationError, match="nome do reader"):
+        validate_reader_connection(name, "192.168.0.214", "5084")
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["", " ", "192.168", "192.168.0.999", "-reader", "reader..local"],
+)
+def test_rejects_invalid_reader_form_host(host: str) -> None:
+    with pytest.raises(ReaderConfigurationValidationError, match="endereço|IP|hostname"):
+        validate_reader_connection("Reader", host, "5084")
+
+
+@pytest.mark.parametrize("port", ["0", "65536", "abc", "5084.5", ""])
+def test_rejects_invalid_reader_form_port(port: str) -> None:
+    with pytest.raises(ReaderConfigurationValidationError, match="porta"):
+        validate_reader_connection("Reader", "192.168.0.214", port)
 
 
 @pytest.mark.parametrize(

@@ -77,7 +77,6 @@ def test_sends_original_hex_epc_without_ascii_conversion() -> None:
     request, _ = captured[0]
     assert json.loads(request.data or b"") == {"epc": epc}
     assert result.epc == epc
-    assert result.tag == ""
 
 
 def test_extracts_additional_fields_from_power_automate_body() -> None:
@@ -195,8 +194,8 @@ def test_normalizes_supported_true_values(success: object) -> None:
     assert client.lookup("EPC-01").status is TagLookupStatus.FOUND
 
 
-@pytest.mark.parametrize("success", [False, "false", "False", 0, "0", "other", None])
-def test_treats_other_success_values_as_not_found(success: object) -> None:
+@pytest.mark.parametrize("success", [False, "false", "False", 0, "0"])
+def test_normalizes_supported_false_values(success: object) -> None:
     client = client_with(
         json_response(
             {
@@ -211,6 +210,22 @@ def test_treats_other_success_values_as_not_found(success: object) -> None:
 
     assert result.status is TagLookupStatus.NOT_FOUND
     assert result.message == "Etiqueta não localizada"
+
+
+@pytest.mark.parametrize("success", [None, "other", 2, 1.0, 0.0, [], {}])
+def test_rejects_invalid_success_values(success: object) -> None:
+    client = client_with(
+        json_response(
+            {
+                "sucesso": success,
+                "mensagem": "Resposta inválida",
+                "epc": "EPC-01",
+            }
+        )
+    )
+
+    with pytest.raises(TagLookupResponseError, match="sucesso"):
+        client.lookup("EPC-01")
 
 
 def test_rejects_non_success_http_status() -> None:

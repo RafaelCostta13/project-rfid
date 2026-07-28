@@ -26,7 +26,7 @@ CONNECTION_NAMES = {
     ConnectionKind.INTERNET: "Internet",
 }
 PAGE_NAMES = {
-    PageId.SYSTEM_STATUS: "Status do sistema",
+    PageId.SYSTEM_STATUS: "Start",
     PageId.RFID_SETTINGS: "Configurações RFID",
 }
 

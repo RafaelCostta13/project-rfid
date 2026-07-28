@@ -3,6 +3,8 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import pytest
+
 from rfid_reader.domain import (
     TagLookupChanged,
     TagLookupEvent,
@@ -15,6 +17,16 @@ from rfid_reader.integrations.sharepoint_client import (
     TagLookupClientError,
 )
 from rfid_reader.services.tag_lookup import FRIENDLY_ERROR_MESSAGE, TagLookupService
+
+EPC_01 = "4550432D3031"
+EPC_02 = "4550432D3032"
+EPC_03 = "4550432D3033"
+EPC_IN_FLIGHT = "494E2D464C49474854"
+EPC_OLD = "4F4C44"
+EPC_NEW = "4E4557"
+EPC_QUEUED = "515545554544"
+EPC_OVERFLOW = "4F564552464C4F57"
+EPC_ERROR = "4552524F52"
 
 
 def tag(epc: str, antenna_id: int | None = 1) -> TagRead:
@@ -89,11 +101,11 @@ def test_deduplicates_same_reader_antenna_and_epc_in_one_session() -> None:
     try:
         service.start_session()
 
-        assert service.submit(tag("EPC-01"))
-        assert not service.submit(tag("EPC-01"))
-        wait_until(lambda: len(completed(events, "EPC-01")) == 1)
+        assert service.submit(tag(EPC_01))
+        assert not service.submit(tag(EPC_01))
+        wait_until(lambda: len(completed(events, EPC_01)) == 1)
 
-        assert client.epcs == ["EPC-01"]
+        assert client.epcs == [EPC_01]
     finally:
         service.close()
 
@@ -105,11 +117,11 @@ def test_same_epc_on_another_antenna_has_an_independent_lookup() -> None:
     try:
         service.start_session()
 
-        service.submit(tag("EPC-01", 1))
-        service.submit(tag("EPC-01", 2))
-        wait_until(lambda: len(completed(events, "EPC-01")) == 2)
+        service.submit(tag(EPC_01, 1))
+        service.submit(tag(EPC_01, 2))
+        wait_until(lambda: len(completed(events, EPC_01)) == 2)
 
-        assert client.epcs == ["EPC-01", "EPC-01"]
+        assert client.epcs == [EPC_01, EPC_01]
     finally:
         service.close()
 
@@ -120,11 +132,11 @@ def test_new_session_allows_a_new_lookup_for_same_tag() -> None:
     service = TagLookupService(client, 10, events.append)
     try:
         first_session = service.start_session()
-        service.submit(tag("EPC-01"))
+        service.submit(tag(EPC_01))
         wait_until(lambda: len(client.epcs) == 1)
 
         second_session = service.start_session()
-        service.submit(tag("EPC-01"))
+        service.submit(tag(EPC_01))
         wait_until(lambda: len(client.epcs) == 2)
 
         assert second_session == first_session + 1
@@ -139,7 +151,7 @@ def test_processes_multiple_epcs_with_individual_results() -> None:
     service = TagLookupService(client, 10, events.append)
     try:
         service.start_session()
-        for epc in ("EPC-01", "EPC-02", "EPC-03"):
+        for epc in (EPC_01, EPC_02, EPC_03):
             service.submit(tag(epc))
 
         wait_until(
@@ -153,20 +165,20 @@ def test_processes_multiple_epcs_with_individual_results() -> None:
             )
         )
 
-        assert client.epcs == ["EPC-01", "EPC-02", "EPC-03"]
+        assert client.epcs == [EPC_01, EPC_02, EPC_03]
         results = {
             event.result.epc: event.result
             for event in events
             if isinstance(event, TagLookupChanged) and event.result.status is TagLookupStatus.FOUND
         }
-        assert results["EPC-01"].customer == "Cliente EPC-01"
-        assert results["EPC-02"].customer == "Cliente EPC-02"
-        assert results["EPC-03"].order_number == "Pedido EPC-03"
+        assert results[EPC_01].customer == f"Cliente {EPC_01}"
+        assert results[EPC_02].customer == f"Cliente {EPC_02}"
+        assert results[EPC_03].order_number == f"Pedido {EPC_03}"
     finally:
         service.close()
 
 
-def test_multiple_hex_epcs_keep_individual_ascii_tags() -> None:
+def test_multiple_hex_epcs_are_forwarded_without_conversion() -> None:
     client = RecordingClient()
     events: list[TagLookupEvent] = []
     service = TagLookupService(client, 10, events.append)
@@ -182,32 +194,28 @@ def test_multiple_hex_epcs_keep_individual_ascii_tags() -> None:
             )
         )
 
-        assert completed(events, "5441472D3031")[0].result.tag == "TAG-01"
-        assert completed(events, "5441472D3032")[0].result.tag == "TAG-02"
+        assert completed(events, "5441472D3031")[0].result.epc == "5441472D3031"
+        assert completed(events, "5441472D3032")[0].result.epc == "5441472D3032"
         assert client.epcs == ["5441472D3031", "5441472D3032"]
     finally:
         service.close()
 
 
-def test_invalid_visual_conversion_does_not_block_lookup_with_original_epc() -> None:
+def test_invalid_epc_is_ignored_without_lookup_or_visual_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     client = RecordingClient()
     events: list[TagLookupEvent] = []
     service = TagLookupService(client, 10, events.append)
     try:
         service.start_session()
 
-        assert service.submit(tag("INVALID-EPC"))
-        wait_until(lambda: len(completed(events, "INVALID-EPC")) == 1)
+        with caplog.at_level("WARNING"):
+            assert not service.submit(tag("INVALID-EPC"))
 
-        consulting = next(
-            event
-            for event in events
-            if isinstance(event, TagLookupChanged)
-            and event.result.status is TagLookupStatus.CONSULTING
-        )
-        assert consulting.result.tag == "Tag inválida"
-        assert completed(events, "INVALID-EPC")[0].result.tag == "Tag inválida"
-        assert client.epcs == ["INVALID-EPC"]
+        assert client.epcs == []
+        assert not any(isinstance(event, TagLookupChanged) for event in events)
+        assert "tag_lookup_invalid_epc_ignored" in caplog.text
     finally:
         service.close()
 
@@ -220,7 +228,7 @@ def test_stop_prevents_new_lookups() -> None:
         service.start_session()
         service.stop_accepting()
 
-        assert not service.submit(tag("EPC-01"))
+        assert not service.submit(tag(EPC_01))
         time.sleep(0.02)
 
         assert client.epcs == []
@@ -235,15 +243,15 @@ def test_in_flight_lookup_can_finish_after_stop() -> None:
     service = TagLookupService(client, 10, events.append)
     try:
         session_id = service.start_session()
-        service.submit(tag("IN-FLIGHT"))
+        service.submit(tag(EPC_IN_FLIGHT))
         assert client.started.wait(1.0)
 
         service.stop_accepting()
         client.release.set()
-        wait_until(lambda: len(completed(events, "IN-FLIGHT")) == 1)
+        wait_until(lambda: len(completed(events, EPC_IN_FLIGHT)) == 1)
 
-        assert completed(events, "IN-FLIGHT")[0].session_id == session_id
-        assert completed(events, "IN-FLIGHT")[0].result.status is TagLookupStatus.FOUND
+        assert completed(events, EPC_IN_FLIGHT)[0].session_id == session_id
+        assert completed(events, EPC_IN_FLIGHT)[0].result.status is TagLookupStatus.FOUND
     finally:
         client.release.set()
         service.close()
@@ -255,17 +263,17 @@ def test_old_session_result_does_not_update_new_session() -> None:
     service = TagLookupService(client, 10, events.append)
     try:
         old_session = service.start_session()
-        service.submit(tag("OLD"))
+        service.submit(tag(EPC_OLD))
         assert client.started.wait(1.0)
 
         new_session = service.start_session()
-        service.submit(tag("NEW"))
+        service.submit(tag(EPC_NEW))
         client.release.set()
-        wait_until(lambda: len(completed(events, "NEW")) == 1)
+        wait_until(lambda: len(completed(events, EPC_NEW)) == 1)
 
         assert old_session != new_session
-        assert completed(events, "OLD") == []
-        assert completed(events, "NEW")[0].session_id == new_session
+        assert completed(events, EPC_OLD) == []
+        assert completed(events, EPC_NEW)[0].session_id == new_session
     finally:
         client.release.set()
         service.close()
@@ -277,13 +285,13 @@ def test_queue_full_marks_affected_epc_as_error_without_blocking() -> None:
     service = TagLookupService(client, 1, events.append)
     try:
         service.start_session()
-        service.submit(tag("IN-FLIGHT"))
+        service.submit(tag(EPC_IN_FLIGHT))
         assert client.started.wait(1.0)
-        service.submit(tag("QUEUED"))
+        service.submit(tag(EPC_QUEUED))
 
-        assert not service.submit(tag("OVERFLOW"))
+        assert not service.submit(tag(EPC_OVERFLOW))
 
-        errors = completed(events, "OVERFLOW")
+        errors = completed(events, EPC_OVERFLOW)
         assert len(errors) == 1
         assert errors[0].result.status is TagLookupStatus.ERROR
         assert errors[0].result.message == FRIENDLY_ERROR_MESSAGE
@@ -301,10 +309,10 @@ def test_client_failure_marks_only_that_epc_as_error() -> None:
     )
     try:
         service.start_session()
-        service.submit(tag("EPC-ERROR"))
-        wait_until(lambda: len(completed(events, "EPC-ERROR")) == 1)
+        service.submit(tag(EPC_ERROR))
+        wait_until(lambda: len(completed(events, EPC_ERROR)) == 1)
 
-        result = completed(events, "EPC-ERROR")[0].result
+        result = completed(events, EPC_ERROR)[0].result
         assert result.status is TagLookupStatus.ERROR
         assert result.message == FRIENDLY_ERROR_MESSAGE
     finally:

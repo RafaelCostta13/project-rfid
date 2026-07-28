@@ -4,28 +4,32 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
-from datetime import UTC, datetime
 from tkinter import ttk
 
 from rfid_reader.domain import (
-    ConnectionKind,
     ConnectionStatus,
     InventoryStatus,
-    TagLookupKey,
+    ReaderConfigurationAction,
+    ReaderConfigurationFeedback,
+    ReaderConfigurationOutcome,
+    ReaderConnectionSettings,
     TagLookupResult,
     TagLookupStatus,
 )
 from rfid_reader.ui.components import (
     APP_BACKGROUND,
-    CONNECTION_NAMES,
     HEADER_BACKGROUND,
     STATUS_COLORS,
     TEXT_MUTED,
     TEXT_PRIMARY,
 )
 
+START_PAGE_TITLE = "Start"
+SUMMARY_CARD_TITLE = "EPCs encontrados"
+RFID_SETTINGS_FIELDS = ("Nome do reader", "Endereço IP", "Porta")
+TEST_CONNECTION_BUTTON_TEXT = "Testar conexão"
+SAVE_CONFIGURATION_BUTTON_TEXT = "Salvar configurações"
 TAG_TABLE_HEADINGS = (
-    ("tag", "Tag"),
     ("status", "Status"),
     ("customer", "Cliente"),
     ("invoice_number", "Nota fiscal"),
@@ -40,7 +44,6 @@ def tag_lookup_values(result: TagLookupResult) -> tuple[str, ...]:
     """Converte o modelo normalizado para a ordem visual da tabela."""
 
     return (
-        result.tag,
         result.status.value,
         result.customer,
         result.invoice_number,
@@ -51,109 +54,72 @@ def tag_lookup_values(result: TagLookupResult) -> tuple[str, ...]:
 
 
 class SystemStatusPage(tk.Frame):
-    """Resumo do reader e das conexões atuais."""
+    """Controles e resultados da sessão atual de leitura."""
 
     def __init__(
         self,
         parent: tk.Misc,
-        reader_name: str,
-        reader_host: str,
-        reader_port: int,
         on_start_inventory: Callable[[], object],
         on_stop_inventory: Callable[[], object],
     ) -> None:
         super().__init__(parent, background=APP_BACKGROUND, padx=32, pady=28)
-        self._status_labels: dict[ConnectionKind, tk.Label] = {}
-        self._last_checked_label: tk.Label
+        self._found_count_label: tk.Label
         self._inventory_status_label: tk.Label
         self._start_button: tk.Button
         self._stop_button: tk.Button
         self._tag_table: ttk.Treeview
-        self._tag_rows: dict[TagLookupKey, str] = {}
+        self._tag_rows: dict[str, str] = {}
         self._next_tag_row = 0
-        self._build(
-            reader_name,
-            reader_host,
-            reader_port,
-            on_start_inventory,
-            on_stop_inventory,
-        )
+        self._build(on_start_inventory, on_stop_inventory)
 
     def _build(
         self,
-        reader_name: str,
-        reader_host: str,
-        reader_port: int,
         on_start_inventory: Callable[[], object],
         on_stop_inventory: Callable[[], object],
     ) -> None:
         tk.Label(
             self,
-            text="Status do sistema",
+            text=START_PAGE_TITLE,
             background=APP_BACKGROUND,
             foreground=TEXT_PRIMARY,
             font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w")
         tk.Label(
             self,
-            text="Informações atuais do reader e dos serviços essenciais.",
+            text="Resumo da sessão atual de leitura.",
             background=APP_BACKGROUND,
             foreground=TEXT_MUTED,
             font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(4, 24))
+        self._build_summary()
+        self._build_inventory(on_start_inventory, on_stop_inventory)
 
-        reader_card = tk.Frame(
-            self,
+    def _build_summary(self) -> None:
+        summary = tk.Frame(self, background=APP_BACKGROUND)
+        summary.pack(fill="x", pady=(0, 16))
+        summary.columnconfigure(0, weight=1)
+        card = tk.Frame(
+            summary,
             background=HEADER_BACKGROUND,
             padx=24,
             pady=20,
         )
-        reader_card.pack(fill="x", pady=(0, 16))
-        self._detail(reader_card, "Reader configurado", reader_name, 0)
-        self._detail(reader_card, "Endereço LLRP", f"{reader_host}:{reader_port}", 1)
-
-        connections = tk.Frame(self, background=APP_BACKGROUND)
-        connections.pack(fill="x", pady=(0, 18))
-        for column, kind in enumerate(ConnectionKind):
-            connections.columnconfigure(column, weight=1, uniform="connection")
-            card = tk.Frame(
-                connections,
-                background=HEADER_BACKGROUND,
-                padx=22,
-                pady=18,
-            )
-            card.grid(
-                row=0,
-                column=column,
-                padx=(0, 8) if column == 0 else (8, 0),
-                sticky="nsew",
-            )
-            tk.Label(
-                card,
-                text=CONNECTION_NAMES[kind],
-                background=HEADER_BACKGROUND,
-                foreground=TEXT_MUTED,
-                font=("Segoe UI", 9),
-            ).pack(anchor="w")
-            status_label = tk.Label(
-                card,
-                text=ConnectionStatus.CHECKING.value,
-                background=HEADER_BACKGROUND,
-                foreground=STATUS_COLORS[ConnectionStatus.CHECKING],
-                font=("Segoe UI", 12, "bold"),
-            )
-            status_label.pack(anchor="w", pady=(8, 0))
-            self._status_labels[kind] = status_label
-
-        self._last_checked_label = tk.Label(
-            self,
-            text="Última verificação: aguardando",
-            background=APP_BACKGROUND,
+        card.grid(row=0, column=0, sticky="nsew")
+        tk.Label(
+            card,
+            text=SUMMARY_CARD_TITLE,
+            background=HEADER_BACKGROUND,
             foreground=TEXT_MUTED,
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 10),
+        ).pack(anchor="w")
+        self._found_count_label = tk.Label(
+            card,
+            text="0",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_PRIMARY,
+            font=("Segoe UI", 24, "bold"),
         )
-        self._last_checked_label.pack(anchor="w")
-        self._build_inventory(on_start_inventory, on_stop_inventory)
+        self._found_count_label.pack(pady=(14, 0))
 
     def _build_inventory(
         self,
@@ -166,7 +132,7 @@ class SystemStatusPage(tk.Frame):
             padx=24,
             pady=20,
         )
-        inventory.pack(fill="both", expand=True, pady=(24, 0))
+        inventory.pack(fill="both", expand=True)
         controls = tk.Frame(inventory, background=HEADER_BACKGROUND)
         controls.pack(fill="x")
         tk.Label(
@@ -238,60 +204,20 @@ class SystemStatusPage(tk.Frame):
         )
         for column, heading in TAG_TABLE_HEADINGS:
             self._tag_table.heading(column, text=heading)
-        self._tag_table.column("tag", width=180, minwidth=140, stretch=True)
         self._tag_table.column("status", width=120, minwidth=110, stretch=False)
         self._tag_table.column("customer", width=180, minwidth=130, stretch=True)
         self._tag_table.column("invoice_number", width=110, minwidth=90, stretch=False)
         self._tag_table.column("volume", width=80, minwidth=65, stretch=False)
         self._tag_table.column("order_number", width=130, minwidth=100, stretch=False)
         self._tag_table.column("dock", width=80, minwidth=65, stretch=False)
-        self._tag_table.tag_configure(TagLookupStatus.CONSULTING.value, foreground="#1D4ED8")
         self._tag_table.tag_configure(TagLookupStatus.FOUND.value, foreground="#16803C")
-        self._tag_table.tag_configure(TagLookupStatus.NOT_FOUND.value, foreground="#B45309")
-        self._tag_table.tag_configure(TagLookupStatus.ERROR.value, foreground="#B42318")
         self._tag_table.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._tag_table.yview)
 
-    @staticmethod
-    def _detail(
-        parent: tk.Misc,
-        label: str,
-        value: str,
-        column: int,
-    ) -> None:
-        detail = tk.Frame(parent, background=HEADER_BACKGROUND)
-        detail.pack(side="left", fill="x", expand=True, padx=(0, 24) if column == 0 else 0)
-        tk.Label(
-            detail,
-            text=label,
-            background=HEADER_BACKGROUND,
-            foreground=TEXT_MUTED,
-            font=("Segoe UI", 9),
-        ).pack(anchor="w")
-        tk.Label(
-            detail,
-            text=value,
-            background=HEADER_BACKGROUND,
-            foreground=TEXT_PRIMARY,
-            font=("Segoe UI", 11, "bold"),
-        ).pack(anchor="w", pady=(5, 0))
+    def set_summary(self, found: int) -> None:
+        """Exibe o total calculado pela coleção de encontrados da sessão."""
 
-    def set_status(
-        self,
-        kind: ConnectionKind,
-        status: ConnectionStatus,
-        checked_at: datetime | None = None,
-    ) -> None:
-        """Atualiza o status da página a partir da fonte global."""
-
-        timestamp = datetime.now(UTC) if checked_at is None else checked_at.astimezone(UTC)
-        self._status_labels[kind].configure(
-            text=status.value,
-            foreground=STATUS_COLORS[status],
-        )
-        self._last_checked_label.configure(
-            text=f"Última verificação: {timestamp:%d/%m/%Y %H:%M:%S} UTC"
-        )
+        self._found_count_label.configure(text=str(found))
 
     def set_inventory_status(self, status: InventoryStatus) -> None:
         """Atualiza o estado e a disponibilidade dos controles."""
@@ -318,15 +244,15 @@ class SystemStatusPage(tk.Frame):
         self._tag_rows.clear()
         self._next_tag_row = 0
 
-    def set_tag_lookup(self, key: TagLookupKey, result: TagLookupResult) -> None:
-        """Inclui ou atualiza o resultado associado à etiqueta correta."""
+    def set_tag_lookup(self, result: TagLookupResult) -> None:
+        """Inclui ou atualiza um resultado encontrado pelo EPC técnico."""
 
         values = tag_lookup_values(result)
-        row_id = self._tag_rows.get(key)
+        row_id = self._tag_rows.get(result.epc)
         if row_id is None:
             self._next_tag_row += 1
             row_id = f"tag-{self._next_tag_row}"
-            self._tag_rows[key] = row_id
+            self._tag_rows[result.epc] = row_id
             self._tag_table.insert(
                 "",
                 tk.END,
@@ -339,11 +265,27 @@ class SystemStatusPage(tk.Frame):
         self._tag_table.see(row_id)
 
 
-class RFIDSettingsPlaceholderPage(tk.Frame):
-    """Espaço reservado sem operações reais de configuração."""
+class RFIDSettingsPage(tk.Frame):
+    """Formulário para testar e salvar a conexão do reader."""
 
-    def __init__(self, parent: tk.Misc) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        settings: ReaderConnectionSettings,
+        on_test_connection: Callable[[str, str, str], object],
+        on_save: Callable[[str, str, str], object],
+    ) -> None:
         super().__init__(parent, background=APP_BACKGROUND, padx=32, pady=28)
+        self._reader_name_var = tk.StringVar(value=settings.name)
+        self._reader_host_var = tk.StringVar(value=settings.host)
+        self._reader_port_var = tk.StringVar(value=str(settings.port))
+        self._on_test_connection = on_test_connection
+        self._on_save = on_save
+        self._test_button: tk.Button
+        self._feedback_label: tk.Label
+        self._build()
+
+    def _build(self) -> None:
         tk.Label(
             self,
             text="Configurações RFID",
@@ -353,8 +295,125 @@ class RFIDSettingsPlaceholderPage(tk.Frame):
         ).pack(anchor="w")
         tk.Label(
             self,
-            text="As configurações do reader serão disponibilizadas em uma próxima etapa.",
+            text="Altere, teste e salve os dados usados para conectar ao reader.",
             background=APP_BACKGROUND,
             foreground=TEXT_MUTED,
             font=("Segoe UI", 10),
-        ).pack(anchor="w", pady=(12, 0))
+        ).pack(anchor="w", pady=(4, 24))
+
+        form = tk.Frame(
+            self,
+            background=HEADER_BACKGROUND,
+            padx=24,
+            pady=22,
+        )
+        form.pack(fill="x")
+        variables = (
+            self._reader_name_var,
+            self._reader_host_var,
+            self._reader_port_var,
+        )
+        for row, (label, variable) in enumerate(zip(RFID_SETTINGS_FIELDS, variables, strict=True)):
+            tk.Label(
+                form,
+                text=label,
+                background=HEADER_BACKGROUND,
+                foreground=TEXT_MUTED,
+                font=("Segoe UI", 9),
+            ).grid(row=row * 2, column=0, sticky="w", pady=(0 if row == 0 else 14, 6))
+            tk.Entry(
+                form,
+                textvariable=variable,
+                background="#FFFFFF",
+                foreground=TEXT_PRIMARY,
+                relief="solid",
+                borderwidth=1,
+                font=("Segoe UI", 11),
+            ).grid(row=row * 2 + 1, column=0, sticky="ew")
+        form.columnconfigure(0, weight=1)
+
+        actions = tk.Frame(form, background=HEADER_BACKGROUND)
+        actions.grid(row=6, column=0, sticky="w", pady=(22, 0))
+        self._test_button = tk.Button(
+            actions,
+            text=TEST_CONNECTION_BUTTON_TEXT,
+            command=self._request_test,
+            background="#1D4ED8",
+            foreground="#FFFFFF",
+            activebackground="#1E40AF",
+            activeforeground="#FFFFFF",
+            borderwidth=0,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+            padx=16,
+            pady=9,
+        )
+        self._test_button.pack(side="left", padx=(0, 10))
+        tk.Button(
+            actions,
+            text=SAVE_CONFIGURATION_BUTTON_TEXT,
+            command=self._request_save,
+            background="#16803C",
+            foreground="#FFFFFF",
+            activebackground="#126B33",
+            activeforeground="#FFFFFF",
+            borderwidth=0,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+            padx=16,
+            pady=9,
+        ).pack(side="left")
+
+        self._feedback_label = tk.Label(
+            form,
+            text="",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_MUTED,
+            font=("Segoe UI", 10, "bold"),
+            wraplength=680,
+            justify="left",
+        )
+        self._feedback_label.grid(row=7, column=0, sticky="w", pady=(18, 0))
+
+    def _values(self) -> tuple[str, str, str]:
+        return (
+            self._reader_name_var.get(),
+            self._reader_host_var.get(),
+            self._reader_port_var.get(),
+        )
+
+    def _request_test(self) -> None:
+        self._on_test_connection(*self._values())
+
+    def _request_save(self) -> None:
+        self._on_save(*self._values())
+
+    def set_settings(self, settings: ReaderConnectionSettings) -> None:
+        """Preenche o formulário com a configuração atual em memória."""
+
+        self._reader_name_var.set(settings.name)
+        self._reader_host_var.set(settings.host)
+        self._reader_port_var.set(str(settings.port))
+
+    def apply_feedback(self, event: ReaderConfigurationFeedback) -> None:
+        """Apresenta na thread gráfica o evento produzido pelo serviço."""
+
+        colors = {
+            ReaderConfigurationOutcome.IN_PROGRESS: "#1D4ED8",
+            ReaderConfigurationOutcome.SUCCESS: "#16803C",
+            ReaderConfigurationOutcome.ERROR: "#B42318",
+        }
+        self._feedback_label.configure(
+            text=event.message,
+            foreground=colors[event.outcome],
+        )
+        if event.action is ReaderConfigurationAction.TEST:
+            self._test_button.configure(
+                state=(
+                    "disabled"
+                    if event.outcome is ReaderConfigurationOutcome.IN_PROGRESS
+                    else "normal"
+                )
+            )
+        if event.settings is not None:
+            self.set_settings(event.settings)

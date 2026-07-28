@@ -2,8 +2,8 @@
 
 Aplicação Python para comunicação com leitores RFID, inicialmente o Zebra FX9600.
 A tela principal apresenta o estado da sessão LLRP e do acesso à internet, além
-de permitir iniciar e parar um inventário manual para visualizar Tags em tempo
-real.
+de permitir iniciar e parar um inventário manual para visualizar os EPCs
+confirmados pela base consultada.
 
 ## Requisitos
 
@@ -52,10 +52,11 @@ No Windows:
 Copy-Item .env.example .env
 ```
 
-O arquivo `.env` é local e ignorado pelo Git. A variável `RFID_READER_HOST` é
-obrigatória. As demais possuem valores padrão, mas valores informados são sempre
-validados. `RFID_CONNECTION_TIMEOUT_SECONDS` controla o timeout das sondagens e
-`RFID_STATUS_CHECK_INTERVAL_SECONDS` define o intervalo entre atualizações.
+O arquivo `.env` é local e ignorado pelo Git. Na ausência de valores explícitos,
+o reader usa `192.168.0.214`, porta `5084` e nome `fx9600-01`. Valores informados
+são sempre validados. `RFID_CONNECTION_TIMEOUT_SECONDS` controla o timeout das
+sondagens e `RFID_STATUS_CHECK_INTERVAL_SECONDS` define o intervalo entre
+atualizações.
 
 Para consultar os EPCs pelo fluxo do Power Automate, configure também:
 
@@ -78,19 +79,17 @@ rfid-reader show
 ```
 
 A aplicação mantém uma única sessão LLRP com o FX9600 e a reutiliza tanto para o
-status quanto para o inventário manual. Na página **Status do sistema**, use
-**Iniciar leitura** e **Parar leitura** para controlar o inventário e acompanhar
-as Tags em tempo real. Cada Tag aparece como **Consultando** e depois recebe o
-resultado **Encontrada**, **Não encontrada** ou **Erro**. A lista e a deduplicação
-são reiniciadas a cada novo início.
-
-Quando disponibilizados pelo Power Automate, a tabela também apresenta cliente,
-nota fiscal, volume, pedido e doca associados ao EPC. Campos ausentes ou nulos
+status quanto para o inventário manual. Na página **Start**, use **Iniciar
+leitura** e **Parar leitura** para controlar o inventário. A tabela apresenta
+somente EPCs confirmados pela base, com status, cliente, nota fiscal, volume,
+pedido e doca quando disponibilizados pelo Power Automate. EPCs não encontrados,
+inválidos ou afetados por erro técnico não criam linhas. Campos ausentes ou nulos
 permanecem vazios.
 
-A coluna **Tag** é uma conversão ASCII somente para apresentação. O EPC
-hexadecimal original continua sendo usado internamente na consulta, deduplicação
-e associação da resposta.
+O card **EPCs encontrados** mostra a quantidade de EPCs distintos confirmados na
+sessão atual. A lista, o card e a deduplicação são reiniciados a cada novo
+início. O EPC hexadecimal original permanece usado internamente na consulta,
+deduplicação e associação da resposta, mas não é apresentado como coluna.
 
 As consultas HTTP são processadas por uma fila limitada e por um único worker,
 sem bloquear o callback LLRP. Durante a mesma sessão, a combinação de reader,
@@ -105,6 +104,11 @@ persistente do reader é alterada.
 
 O acesso à internet é verificado por HTTPS, evitando depender da liberação da
 porta DNS 53. Os estados de RFID e Internet são verificados de forma independente.
+
+Na página **Configurações RFID**, nome, IP/hostname e porta podem ser testados e
+salvos no mesmo `.env`. O teste é temporário, não inicia inventário e não altera
+o arquivo. O salvamento preserva as demais chaves e prepara os novos dados para a
+próxima conexão, sem interromper ou reconectar automaticamente a sessão atual.
 
 ## Verificar a configuração
 

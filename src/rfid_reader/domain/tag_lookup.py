@@ -1,6 +1,6 @@
 """Modelos independentes para consultas de etiquetas."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -10,7 +10,7 @@ class TagLookupStatus(StrEnum):
     WAITING = "Aguardando consulta"
     CONSULTING = "Consultando"
     FOUND = "Encontrada"
-    NOT_FOUND = "Não encontrada"
+    NOT_FOUND = "Não encontrado"
     ERROR = "Erro"
 
 
@@ -30,12 +30,41 @@ class TagLookupResult:
     epc: str
     status: TagLookupStatus
     message: str
-    tag: str = ""
     customer: str = ""
     invoice_number: str = ""
     order_number: str = ""
     volume: str = ""
     dock: str = ""
+
+
+@dataclass(slots=True)
+class TagLookupSessionSummary:
+    """Mantém os resultados encontrados por EPC técnico na sessão atual."""
+
+    _found_results: dict[str, TagLookupResult] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+
+    def update(self, result: TagLookupResult) -> bool:
+        """Registra somente confirmações da base e informa se devem ser exibidas."""
+
+        if result.status is not TagLookupStatus.FOUND:
+            return False
+        self._found_results[result.epc] = result
+        return True
+
+    def reset(self) -> None:
+        """Descarta os resultados pertencentes à sessão anterior."""
+
+        self._found_results.clear()
+
+    @property
+    def total(self) -> int:
+        """Retorna o total de EPCs distintos confirmados pela base."""
+
+        return len(self._found_results)
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,7 +6,7 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from rfid_reader.domain import (
     TagLookupChanged,
@@ -24,7 +24,7 @@ from rfid_reader.integrations.sharepoint_client import (
     TagLookupResponseError,
     TagLookupTimeoutError,
 )
-from rfid_reader.services.tag_presentation import epc_hex_to_ascii
+from rfid_reader.services.tag_validation import is_valid_epc
 
 LOGGER = logging.getLogger(__name__)
 FRIENDLY_ERROR_MESSAGE = "Não foi possível consultar a etiqueta."
@@ -35,7 +35,6 @@ TagLookupListener = Callable[[TagLookupEvent], None]
 class _LookupTask:
     session_id: int
     key: TagLookupKey
-    tag: str
 
 
 class TagLookupService:
@@ -85,6 +84,15 @@ class TagLookupService:
     def submit(self, tag: TagRead) -> bool:
         """Agenda uma consulta sem bloquear a thread que entregou a leitura."""
 
+        if not is_valid_epc(tag.epc):
+            LOGGER.warning(
+                "tag_lookup_invalid_epc_ignored reader_id=%s antenna=%s epc=%s",
+                tag.reader_id,
+                tag.antenna_id,
+                tag.epc,
+            )
+            return False
+
         key = TagLookupKey(tag.reader_id, tag.antenna_id, tag.epc)
         with self._lock:
             if self._closed or not self._accepting or key in self._seen:
@@ -92,16 +100,14 @@ class TagLookupService:
             self._seen.add(key)
             session_id = self._session_id
 
-        display_tag = epc_hex_to_ascii(key.epc)
         self._emit_changed(
             session_id,
             key,
             TagLookupStatus.CONSULTING,
             "",
-            display_tag,
         )
         try:
-            self._queue.put_nowait(_LookupTask(session_id, key, display_tag))
+            self._queue.put_nowait(_LookupTask(session_id, key))
         except queue.Full:
             LOGGER.error(
                 "tag_lookup_queue_full reader_id=%s antenna=%s epc=%s",
@@ -109,7 +115,7 @@ class TagLookupService:
                 key.antenna_id,
                 key.epc,
             )
-            self._emit_error(session_id, key, display_tag)
+            self._emit_error(session_id, key)
             return False
         return True
 
@@ -171,21 +177,20 @@ class TagLookupService:
             TagLookupChanged(
                 task.session_id,
                 task.key,
-                replace(result, tag=task.tag),
+                result,
             )
         )
 
     def _emit_error_if_current(self, task: _LookupTask) -> None:
         if self._is_current_session(task.session_id):
-            self._emit_error(task.session_id, task.key, task.tag)
+            self._emit_error(task.session_id, task.key)
 
-    def _emit_error(self, session_id: int, key: TagLookupKey, tag: str) -> None:
+    def _emit_error(self, session_id: int, key: TagLookupKey) -> None:
         self._emit_changed(
             session_id,
             key,
             TagLookupStatus.ERROR,
             FRIENDLY_ERROR_MESSAGE,
-            tag,
         )
 
     def _emit_changed(
@@ -194,13 +199,12 @@ class TagLookupService:
         key: TagLookupKey,
         status: TagLookupStatus,
         message: str,
-        tag: str,
     ) -> None:
         self._emit(
             TagLookupChanged(
                 session_id,
                 key,
-                TagLookupResult(key.epc, status, message, tag=tag),
+                TagLookupResult(key.epc, status, message),
             )
         )
 

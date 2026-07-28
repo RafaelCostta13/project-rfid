@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+from pathlib import Path
 
 from rfid_reader.config import Settings
 from rfid_reader.domain import (
@@ -13,6 +14,8 @@ from rfid_reader.domain import (
     InventoryEvent,
     InventoryStatus,
     InventoryStatusChanged,
+    ReaderConfigurationFeedback,
+    ReaderConnectionSettings,
     TagLookupEvent,
     TagReceived,
 )
@@ -20,7 +23,9 @@ from rfid_reader.integrations import SharePointLookupClient
 from rfid_reader.readers import ZebraFX9600Reader
 from rfid_reader.services import (
     ConnectionMonitor,
+    DotEnvReaderConfigurationStore,
     ManualInventoryService,
+    ReaderConfigurationService,
     ReaderConnectionChecker,
     TagLookupService,
 )
@@ -40,7 +45,7 @@ def configure_logging(level: str) -> None:
     )
 
 
-def run_application(settings: Settings) -> None:
+def run_application(settings: Settings, configuration_path: Path) -> None:
     """Cria os componentes, exibe a tela e garante o encerramento."""
 
     try:
@@ -54,6 +59,7 @@ def run_application(settings: Settings) -> None:
     updates: queue.SimpleQueue[tuple[ConnectionKind, ConnectionStatus]] = queue.SimpleQueue()
     inventory_updates: queue.SimpleQueue[InventoryEvent] = queue.SimpleQueue()
     lookup_updates: queue.SimpleQueue[TagLookupEvent] = queue.SimpleQueue()
+    configuration_updates: queue.SimpleQueue[ReaderConfigurationFeedback] = queue.SimpleQueue()
     reader = ZebraFX9600Reader(
         settings.reader_host,
         settings.reader_port,
@@ -94,12 +100,31 @@ def run_application(settings: Settings) -> None:
         lambda kind, status: updates.put((kind, status)),
     )
 
+    def temporary_reader(connection: ReaderConnectionSettings) -> ZebraFX9600Reader:
+        return ZebraFX9600Reader(
+            connection.host,
+            connection.port,
+            connection.name,
+            settings.antennas[0],
+            settings.connection_timeout_seconds,
+        )
+
+    reader_configuration = ReaderConfigurationService(
+        settings,
+        DotEnvReaderConfigurationStore(configuration_path),
+        reader,
+        temporary_reader,
+        lambda: inventory.status is InventoryStatus.READING,
+        configuration_updates.put,
+    )
+
     def stop_inventory() -> bool:
         lookup.stop_accepting()
         return inventory.stop()
 
     def shutdown() -> None:
         stop_inventory()
+        reader_configuration.close()
         monitor.stop()
         inventory.close()
         lookup.close()
@@ -109,15 +134,17 @@ def run_application(settings: Settings) -> None:
             updates,
             inventory_updates,
             lookup_updates,
+            configuration_updates,
             shutdown,
             inventory.start,
             stop_inventory,
-            reader_name=settings.reader_name,
-            reader_host=settings.reader_host,
-            reader_port=settings.reader_port,
+            reader_configuration.current,
+            reader_configuration.test_connection,
+            reader_configuration.save,
         )
     except Exception as error:
         monitor.stop()
+        reader_configuration.close()
         lookup.close()
         inventory.close()
         raise ApplicationError(f"não foi possível criar a janela principal: {error}") from error

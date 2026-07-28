@@ -14,6 +14,7 @@ from rfid_reader.readers.base import (
     DisconnectCallback,
     ReaderConnectionError,
     ReaderProtocolError,
+    ReaderTimeoutError,
     TagCallback,
 )
 
@@ -122,6 +123,9 @@ class ZebraFX9600Reader:
         self._host = host
         self._port = port
         self._reader_id = reader_id
+        self._next_host = host
+        self._next_port = port
+        self._next_reader_id = reader_id
         self._antenna_id = antenna_id
         self._timeout_seconds = timeout_seconds
         self._client_factory = client_factory
@@ -145,6 +149,10 @@ class ZebraFX9600Reader:
         with self._operation_lock:
             if self.is_connected():
                 return
+            with self._lock:
+                self._host = self._next_host
+                self._port = self._next_port
+                self._reader_id = self._next_reader_id
             self._configured.clear()
             self._configuration_failed.clear()
             client, states = self._client_factory(
@@ -165,7 +173,12 @@ class ZebraFX9600Reader:
             client.add_disconnected_callback(self._on_disconnected)
             try:
                 client.connect()
-            except (TimeoutError, OSError) as error:
+            except TimeoutError as error:
+                self._clear_client(client)
+                raise ReaderTimeoutError(
+                    f"timeout ao conectar a {self._host}:{self._port}"
+                ) from error
+            except OSError as error:
                 self._clear_client(client)
                 raise ReaderConnectionError(
                     f"não foi possível conectar a {self._host}:{self._port}"
@@ -177,7 +190,7 @@ class ZebraFX9600Reader:
             if not self._configured.wait(self._timeout_seconds):
                 self._disconnect_client(client)
                 self._clear_client(client)
-                raise ReaderConnectionError("timeout ao preparar a sessão LLRP")
+                raise ReaderTimeoutError("timeout ao preparar a sessão LLRP")
             if self._configuration_failed.is_set() or not client.is_alive():
                 self._disconnect_client(client)
                 self._clear_client(client)
@@ -188,6 +201,20 @@ class ZebraFX9600Reader:
                 self._host,
                 self._port,
             )
+
+    def configure_connection(self, host: str, port: int, reader_id: str) -> None:
+        """Prepara valores que serão usados somente na próxima conexão."""
+
+        with self._lock:
+            self._next_host = host
+            self._next_port = port
+            self._next_reader_id = reader_id
+        LOGGER.info(
+            "reader_next_connection_configured reader_id=%s reader_host=%s reader_port=%s",
+            reader_id,
+            host,
+            port,
+        )
 
     def _on_configuration_response(
         self,
