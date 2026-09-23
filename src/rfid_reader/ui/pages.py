@@ -15,6 +15,10 @@ from rfid_reader.domain import (
     ReaderConnectionSettings,
     TagLookupResult,
     TagLookupStatus,
+    WaveshareConfigurationAction,
+    WaveshareConfigurationFeedback,
+    WaveshareConfigurationOutcome,
+    WaveshareConnectionSettings,
 )
 from rfid_reader.ui.components import (
     APP_BACKGROUND,
@@ -27,6 +31,14 @@ from rfid_reader.ui.components import (
 START_PAGE_TITLE = "Start"
 SUMMARY_CARD_TITLE = "EPCs encontrados"
 RFID_SETTINGS_FIELDS = ("Nome do reader", "Endereço IP", "Porta")
+WAVESHARE_SETTINGS_FIELDS = (
+    "Porta COM",
+    "Baud rate",
+    "Data bits",
+    "Paridade",
+    "Stop bits",
+    "Device ID",
+)
 TEST_CONNECTION_BUTTON_TEXT = "Testar conexão"
 SAVE_CONFIGURATION_BUTTON_TEXT = "Salvar configurações"
 TAG_TABLE_HEADINGS = (
@@ -265,20 +277,28 @@ class SystemStatusPage(tk.Frame):
         self._tag_table.see(row_id)
 
 
-class RFIDSettingsPage(tk.Frame):
-    """Formulário para testar e salvar a conexão do reader."""
+class WaveshareSettingsPanel(tk.Frame):
+    """Seção para testar e salvar a configuração Modbus RTU."""
 
     def __init__(
         self,
         parent: tk.Misc,
-        settings: ReaderConnectionSettings,
-        on_test_connection: Callable[[str, str, str], object],
-        on_save: Callable[[str, str, str], object],
+        settings: WaveshareConnectionSettings,
+        on_test_connection: Callable[[str, str, str, str, str, str], object],
+        on_save: Callable[[str, str, str, str, str, str], object],
     ) -> None:
-        super().__init__(parent, background=APP_BACKGROUND, padx=32, pady=28)
-        self._reader_name_var = tk.StringVar(value=settings.name)
-        self._reader_host_var = tk.StringVar(value=settings.host)
-        self._reader_port_var = tk.StringVar(value=str(settings.port))
+        super().__init__(
+            parent,
+            background=HEADER_BACKGROUND,
+            padx=24,
+            pady=22,
+        )
+        self._serial_port_var = tk.StringVar(value=settings.serial_port)
+        self._baud_rate_var = tk.StringVar(value=str(settings.baud_rate))
+        self._data_bits_var = tk.StringVar(value=str(settings.data_bits))
+        self._parity_var = tk.StringVar(value=settings.parity)
+        self._stop_bits_var = tk.StringVar(value=str(settings.stop_bits))
+        self._device_id_var = tk.StringVar(value=str(settings.device_id))
         self._on_test_connection = on_test_connection
         self._on_save = on_save
         self._test_button: tk.Button
@@ -288,26 +308,204 @@ class RFIDSettingsPage(tk.Frame):
     def _build(self) -> None:
         tk.Label(
             self,
-            text="Configurações RFID",
+            text="Waveshare",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_PRIMARY,
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        variables = (
+            self._serial_port_var,
+            self._baud_rate_var,
+            self._data_bits_var,
+            self._parity_var,
+            self._stop_bits_var,
+            self._device_id_var,
+        )
+        for index, (label, variable) in enumerate(
+            zip(WAVESHARE_SETTINGS_FIELDS, variables, strict=True)
+        ):
+            column = index % 2
+            row = (index // 2) * 2 + 1
+            tk.Label(
+                self,
+                text=label,
+                background=HEADER_BACKGROUND,
+                foreground=TEXT_MUTED,
+                font=("Segoe UI", 9),
+            ).grid(row=row, column=column, sticky="w", padx=(0, 12), pady=(0, 6))
+            tk.Entry(
+                self,
+                textvariable=variable,
+                background="#FFFFFF",
+                foreground=TEXT_PRIMARY,
+                relief="solid",
+                borderwidth=1,
+                font=("Segoe UI", 11),
+            ).grid(
+                row=row + 1,
+                column=column,
+                sticky="ew",
+                padx=(0, 12),
+                pady=(0, 14),
+            )
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=1)
+
+        actions = tk.Frame(self, background=HEADER_BACKGROUND)
+        actions.grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self._test_button = tk.Button(
+            actions,
+            text=TEST_CONNECTION_BUTTON_TEXT,
+            command=self._request_test,
+            background="#1D4ED8",
+            foreground="#FFFFFF",
+            activebackground="#1E40AF",
+            activeforeground="#FFFFFF",
+            borderwidth=0,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+            padx=16,
+            pady=9,
+        )
+        self._test_button.pack(side="left", padx=(0, 10))
+        tk.Button(
+            actions,
+            text=SAVE_CONFIGURATION_BUTTON_TEXT,
+            command=self._request_save,
+            background="#16803C",
+            foreground="#FFFFFF",
+            activebackground="#126B33",
+            activeforeground="#FFFFFF",
+            borderwidth=0,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+            padx=16,
+            pady=9,
+        ).pack(side="left")
+
+        self._feedback_label = tk.Label(
+            self,
+            text="",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_MUTED,
+            font=("Segoe UI", 10, "bold"),
+            wraplength=380,
+            justify="left",
+        )
+        self._feedback_label.grid(row=8, column=0, columnspan=2, sticky="w", pady=(18, 0))
+
+    def _values(self) -> tuple[str, str, str, str, str, str]:
+        return (
+            self._serial_port_var.get(),
+            self._baud_rate_var.get(),
+            self._data_bits_var.get(),
+            self._parity_var.get(),
+            self._stop_bits_var.get(),
+            self._device_id_var.get(),
+        )
+
+    def _request_test(self) -> None:
+        self._on_test_connection(*self._values())
+
+    def _request_save(self) -> None:
+        self._on_save(*self._values())
+
+    def set_settings(self, settings: WaveshareConnectionSettings) -> None:
+        """Preenche o formulário com a configuração atual em memória."""
+
+        self._serial_port_var.set(settings.serial_port)
+        self._baud_rate_var.set(str(settings.baud_rate))
+        self._data_bits_var.set(str(settings.data_bits))
+        self._parity_var.set(settings.parity)
+        self._stop_bits_var.set(str(settings.stop_bits))
+        self._device_id_var.set(str(settings.device_id))
+
+    def apply_feedback(self, event: WaveshareConfigurationFeedback) -> None:
+        """Apresenta na thread gráfica o evento produzido pelo serviço."""
+
+        colors = {
+            WaveshareConfigurationOutcome.IN_PROGRESS: "#1D4ED8",
+            WaveshareConfigurationOutcome.SUCCESS: "#16803C",
+            WaveshareConfigurationOutcome.ERROR: "#B42318",
+        }
+        self._feedback_label.configure(
+            text=event.message,
+            foreground=colors[event.outcome],
+        )
+        if event.action is WaveshareConfigurationAction.TEST:
+            self._test_button.configure(
+                state=(
+                    "disabled"
+                    if event.outcome is WaveshareConfigurationOutcome.IN_PROGRESS
+                    else "normal"
+                )
+            )
+        if event.settings is not None:
+            self.set_settings(event.settings)
+
+
+class RFIDSettingsPage(tk.Frame):
+    """Área de configuração do reader e da Waveshare."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        settings: ReaderConnectionSettings,
+        on_test_connection: Callable[[str, str, str], object],
+        on_save: Callable[[str, str, str], object],
+        waveshare_settings: WaveshareConnectionSettings,
+        on_test_waveshare: Callable[[str, str, str, str, str, str], object],
+        on_save_waveshare: Callable[[str, str, str, str, str, str], object],
+    ) -> None:
+        super().__init__(parent, background=APP_BACKGROUND, padx=32, pady=28)
+        self._reader_name_var = tk.StringVar(value=settings.name)
+        self._reader_host_var = tk.StringVar(value=settings.host)
+        self._reader_port_var = tk.StringVar(value=str(settings.port))
+        self._on_test_connection = on_test_connection
+        self._on_save = on_save
+        self._test_button: tk.Button
+        self._feedback_label: tk.Label
+        self._waveshare_settings = waveshare_settings
+        self._on_test_waveshare = on_test_waveshare
+        self._on_save_waveshare = on_save_waveshare
+        self._waveshare_panel: WaveshareSettingsPanel
+        self._build()
+
+    def _build(self) -> None:
+        tk.Label(
+            self,
+            text="Configurações",
             background=APP_BACKGROUND,
             foreground=TEXT_PRIMARY,
             font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w")
         tk.Label(
             self,
-            text="Altere, teste e salve os dados usados para conectar ao reader.",
+            text="Altere, teste e salve as conexões dos dispositivos.",
             background=APP_BACKGROUND,
             foreground=TEXT_MUTED,
             font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(4, 24))
 
+        cards = tk.Frame(self, background=APP_BACKGROUND)
+        cards.pack(fill="both", expand=True)
+        cards.columnconfigure(0, weight=1)
+        cards.columnconfigure(1, weight=1)
+
         form = tk.Frame(
-            self,
+            cards,
             background=HEADER_BACKGROUND,
             padx=24,
             pady=22,
         )
-        form.pack(fill="x")
+        form.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        tk.Label(
+            form,
+            text="Reader RFID",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_PRIMARY,
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 14))
         variables = (
             self._reader_name_var,
             self._reader_host_var,
@@ -320,7 +518,7 @@ class RFIDSettingsPage(tk.Frame):
                 background=HEADER_BACKGROUND,
                 foreground=TEXT_MUTED,
                 font=("Segoe UI", 9),
-            ).grid(row=row * 2, column=0, sticky="w", pady=(0 if row == 0 else 14, 6))
+            ).grid(row=row * 2 + 1, column=0, sticky="w", pady=(0 if row == 0 else 14, 6))
             tk.Entry(
                 form,
                 textvariable=variable,
@@ -329,11 +527,11 @@ class RFIDSettingsPage(tk.Frame):
                 relief="solid",
                 borderwidth=1,
                 font=("Segoe UI", 11),
-            ).grid(row=row * 2 + 1, column=0, sticky="ew")
+            ).grid(row=row * 2 + 2, column=0, sticky="ew")
         form.columnconfigure(0, weight=1)
 
         actions = tk.Frame(form, background=HEADER_BACKGROUND)
-        actions.grid(row=6, column=0, sticky="w", pady=(22, 0))
+        actions.grid(row=7, column=0, sticky="w", pady=(22, 0))
         self._test_button = tk.Button(
             actions,
             text=TEST_CONNECTION_BUTTON_TEXT,
@@ -373,7 +571,15 @@ class RFIDSettingsPage(tk.Frame):
             wraplength=680,
             justify="left",
         )
-        self._feedback_label.grid(row=7, column=0, sticky="w", pady=(18, 0))
+        self._feedback_label.grid(row=8, column=0, sticky="w", pady=(18, 0))
+
+        self._waveshare_panel = WaveshareSettingsPanel(
+            cards,
+            self._waveshare_settings,
+            self._on_test_waveshare,
+            self._on_save_waveshare,
+        )
+        self._waveshare_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
     def _values(self) -> tuple[str, str, str]:
         return (
@@ -417,3 +623,13 @@ class RFIDSettingsPage(tk.Frame):
             )
         if event.settings is not None:
             self.set_settings(event.settings)
+
+    def set_waveshare_settings(self, settings: WaveshareConnectionSettings) -> None:
+        """Atualiza a seção Waveshare com os valores atuais em memória."""
+
+        self._waveshare_panel.set_settings(settings)
+
+    def apply_waveshare_feedback(self, event: WaveshareConfigurationFeedback) -> None:
+        """Encaminha um evento à seção Waveshare na thread gráfica."""
+
+        self._waveshare_panel.apply_feedback(event)

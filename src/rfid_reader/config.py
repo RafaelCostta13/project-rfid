@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from ipaddress import IPv4Address
 from urllib.parse import urlsplit
 
-from rfid_reader.domain import ReaderConnectionSettings
+from rfid_reader.domain import ReaderConnectionSettings, WaveshareConnectionSettings
 
 DEFAULT_READER_HOST = "192.168.0.214"
 DEFAULT_READER_PORT = 5084
@@ -23,8 +23,26 @@ DEFAULT_STATUS_CHECK_INTERVAL_SECONDS = 5.0
 DEFAULT_SHAREPOINT_LOOKUP_TIMEOUT_SECONDS = 10.0
 DEFAULT_SHAREPOINT_LOOKUP_QUEUE_SIZE = 100
 DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_WAVESHARE_SERIAL_PORT = ""
+DEFAULT_WAVESHARE_BAUD_RATE = 9600
+DEFAULT_WAVESHARE_DATA_BITS = 8
+DEFAULT_WAVESHARE_PARITY = "None"
+DEFAULT_WAVESHARE_STOP_BITS = 1
+DEFAULT_WAVESHARE_DEVICE_ID = 1
 KNOWN_LOG_LEVELS = frozenset(logging.getLevelNamesMapping())
 HOSTNAME_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+WAVESHARE_PARITIES = {
+    "none": "None",
+    "n": "None",
+    "even": "Even",
+    "e": "Even",
+    "odd": "Odd",
+    "o": "Odd",
+    "mark": "Mark",
+    "m": "Mark",
+    "space": "Space",
+    "s": "Space",
+}
 
 
 class ConfigurationError(ValueError):
@@ -33,6 +51,14 @@ class ConfigurationError(ValueError):
 
 class ReaderConfigurationValidationError(ValueError):
     """Indica um campo inválido no formulário de conexão."""
+
+    def __init__(self, variable: str, message: str) -> None:
+        super().__init__(message)
+        self.variable = variable
+
+
+class WaveshareConfigurationValidationError(ValueError):
+    """Indica um campo inválido no formulário da Waveshare."""
 
     def __init__(self, variable: str, message: str) -> None:
         super().__init__(message)
@@ -54,6 +80,12 @@ class Settings:
     sharepoint_lookup_timeout_seconds: float
     sharepoint_lookup_queue_size: int
     log_level: str
+    waveshare_serial_port: str = DEFAULT_WAVESHARE_SERIAL_PORT
+    waveshare_baud_rate: int = DEFAULT_WAVESHARE_BAUD_RATE
+    waveshare_data_bits: int = DEFAULT_WAVESHARE_DATA_BITS
+    waveshare_parity: str = DEFAULT_WAVESHARE_PARITY
+    waveshare_stop_bits: int = DEFAULT_WAVESHARE_STOP_BITS
+    waveshare_device_id: int = DEFAULT_WAVESHARE_DEVICE_ID
 
     @property
     def reader_connection(self) -> ReaderConnectionSettings:
@@ -73,6 +105,32 @@ class Settings:
             reader_name=connection.name,
             reader_host=connection.host,
             reader_port=connection.port,
+        )
+
+    @property
+    def waveshare_connection(self) -> WaveshareConnectionSettings:
+        """Retorna os valores editáveis da comunicação Modbus RTU."""
+
+        return WaveshareConnectionSettings(
+            serial_port=self.waveshare_serial_port,
+            baud_rate=self.waveshare_baud_rate,
+            data_bits=self.waveshare_data_bits,
+            parity=self.waveshare_parity,
+            stop_bits=self.waveshare_stop_bits,
+            device_id=self.waveshare_device_id,
+        )
+
+    def with_waveshare_connection(self, connection: WaveshareConnectionSettings) -> Settings:
+        """Cria uma configuração atualizada sem alterar os demais valores."""
+
+        return replace(
+            self,
+            waveshare_serial_port=connection.serial_port,
+            waveshare_baud_rate=connection.baud_rate,
+            waveshare_data_bits=connection.data_bits,
+            waveshare_parity=connection.parity,
+            waveshare_stop_bits=connection.stop_bits,
+            waveshare_device_id=connection.device_id,
         )
 
 
@@ -157,6 +215,103 @@ def validate_reader_connection(
     )
 
 
+def _waveshare_integer(value: str, variable: str, label: str) -> int:
+    try:
+        return int(value.strip())
+    except ValueError as error:
+        raise WaveshareConfigurationValidationError(
+            variable,
+            f"{label} deve ser um número inteiro.",
+        ) from error
+
+
+def validate_waveshare_connection(
+    serial_port: str,
+    baud_rate: str,
+    data_bits: str,
+    parity: str,
+    stop_bits: str,
+    device_id: str,
+    *,
+    require_serial_port: bool = False,
+) -> WaveshareConnectionSettings:
+    """Normaliza e valida os campos editáveis da Waveshare."""
+
+    normalized_port = serial_port.strip()
+    if require_serial_port and not normalized_port:
+        raise WaveshareConfigurationValidationError(
+            "WAVESHARE_SERIAL_PORT",
+            "Informe a porta COM da Waveshare.",
+        )
+    if any(character in normalized_port for character in ("\r", "\n", "\0")) or (
+        "${" in normalized_port
+    ):
+        raise WaveshareConfigurationValidationError(
+            "WAVESHARE_SERIAL_PORT",
+            "A porta COM contém caracteres inválidos.",
+        )
+
+    parsed_baud_rate = _waveshare_integer(
+        baud_rate,
+        "WAVESHARE_BAUD_RATE",
+        "Baud rate",
+    )
+    if parsed_baud_rate <= 0:
+        raise WaveshareConfigurationValidationError(
+            "WAVESHARE_BAUD_RATE",
+            "Baud rate deve ser um número inteiro maior que zero.",
+        )
+
+    parsed_data_bits = _waveshare_integer(
+        data_bits,
+        "WAVESHARE_DATA_BITS",
+        "Data bits",
+    )
+    if parsed_data_bits not in {5, 6, 7, 8}:
+        raise WaveshareConfigurationValidationError(
+            "WAVESHARE_DATA_BITS",
+            "Data bits deve ser 5, 6, 7 ou 8.",
+        )
+
+    normalized_parity = WAVESHARE_PARITIES.get(parity.strip().lower())
+    if normalized_parity is None:
+        raise WaveshareConfigurationValidationError(
+            "WAVESHARE_PARITY",
+            "Paridade deve ser None, Even, Odd, Mark ou Space.",
+        )
+
+    parsed_stop_bits = _waveshare_integer(
+        stop_bits,
+        "WAVESHARE_STOP_BITS",
+        "Stop bits",
+    )
+    if parsed_stop_bits not in {1, 2}:
+        raise WaveshareConfigurationValidationError(
+            "WAVESHARE_STOP_BITS",
+            "Stop bits deve ser 1 ou 2.",
+        )
+
+    parsed_device_id = _waveshare_integer(
+        device_id,
+        "WAVESHARE_DEVICE_ID",
+        "Device ID",
+    )
+    if not 1 <= parsed_device_id <= 247:
+        raise WaveshareConfigurationValidationError(
+            "WAVESHARE_DEVICE_ID",
+            "Device ID deve estar entre 1 e 247.",
+        )
+
+    return WaveshareConnectionSettings(
+        serial_port=normalized_port,
+        baud_rate=parsed_baud_rate,
+        data_bits=parsed_data_bits,
+        parity=normalized_parity,
+        stop_bits=parsed_stop_bits,
+        device_id=parsed_device_id,
+    )
+
+
 def _reader_connection(environment: Mapping[str, str]) -> ReaderConnectionSettings:
     try:
         return validate_reader_connection(
@@ -165,6 +320,20 @@ def _reader_connection(environment: Mapping[str, str]) -> ReaderConnectionSettin
             environment.get("RFID_READER_PORT", str(DEFAULT_READER_PORT)),
         )
     except ReaderConfigurationValidationError as error:
+        raise ConfigurationError(f"{error.variable}: {error}") from error
+
+
+def _waveshare_connection(environment: Mapping[str, str]) -> WaveshareConnectionSettings:
+    try:
+        return validate_waveshare_connection(
+            environment.get("WAVESHARE_SERIAL_PORT", DEFAULT_WAVESHARE_SERIAL_PORT),
+            environment.get("WAVESHARE_BAUD_RATE", str(DEFAULT_WAVESHARE_BAUD_RATE)),
+            environment.get("WAVESHARE_DATA_BITS", str(DEFAULT_WAVESHARE_DATA_BITS)),
+            environment.get("WAVESHARE_PARITY", DEFAULT_WAVESHARE_PARITY),
+            environment.get("WAVESHARE_STOP_BITS", str(DEFAULT_WAVESHARE_STOP_BITS)),
+            environment.get("WAVESHARE_DEVICE_ID", str(DEFAULT_WAVESHARE_DEVICE_ID)),
+        )
+    except WaveshareConfigurationValidationError as error:
         raise ConfigurationError(f"{error.variable}: {error}") from error
 
 
@@ -241,6 +410,7 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
 
     source = os.environ if environment is None else environment
     reader_connection = _reader_connection(source)
+    waveshare_connection = _waveshare_connection(source)
     return Settings(
         reader_host=reader_connection.host,
         reader_port=reader_connection.port,
@@ -269,4 +439,10 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
             DEFAULT_SHAREPOINT_LOOKUP_QUEUE_SIZE,
         ),
         log_level=_log_level(source),
+        waveshare_serial_port=waveshare_connection.serial_port,
+        waveshare_baud_rate=waveshare_connection.baud_rate,
+        waveshare_data_bits=waveshare_connection.data_bits,
+        waveshare_parity=waveshare_connection.parity,
+        waveshare_stop_bits=waveshare_connection.stop_bits,
+        waveshare_device_id=waveshare_connection.device_id,
     )

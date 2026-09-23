@@ -27,7 +27,7 @@ CONNECTION_NAMES = {
 }
 PAGE_NAMES = {
     PageId.SYSTEM_STATUS: "Start",
-    PageId.RFID_SETTINGS: "Configurações RFID",
+    PageId.RFID_SETTINGS: "Configurações",
 }
 
 

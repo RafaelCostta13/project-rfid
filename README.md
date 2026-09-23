@@ -70,6 +70,18 @@ SHAREPOINT_LOOKUP_QUEUE_SIZE=100
 Mantenha seu valor somente no `.env`; a aplicação não exibe nem registra essa URL
 nos logs.
 
+A Waveshare Modbus RTU Relay é opcional nesta etapa. A porta serial começa
+vazia; os demais parâmetros usam os valores validados no protótipo:
+
+```dotenv
+WAVESHARE_SERIAL_PORT=
+WAVESHARE_BAUD_RATE=9600
+WAVESHARE_DATA_BITS=8
+WAVESHARE_PARITY=None
+WAVESHARE_STOP_BITS=1
+WAVESHARE_DEVICE_ID=1
+```
+
 ## Abrir a tela principal
 
 Com o ambiente virtual ativado:
@@ -109,6 +121,11 @@ Na página **Configurações RFID**, nome, IP/hostname e porta podem ser testado
 salvos no mesmo `.env`. O teste é temporário, não inicia inventário e não altera
 o arquivo. O salvamento preserva as demais chaves e prepara os novos dados para a
 próxima conexão, sem interromper ou reconectar automaticamente a sessão atual.
+
+Na mesma área de **Configurações**, a seção **Waveshare** permite testar e salvar
+os parâmetros Modbus RTU. O teste usa somente uma leitura pontual de DI1/DI2,
+fecha a porta em seguida e não aciona relés. Salvar não conecta automaticamente à
+placa, e a ausência de porta configurada não impede o funcionamento do RFID.
 
 ## Verificar a configuração
 

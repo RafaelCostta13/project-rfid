@@ -8,6 +8,10 @@ from rfid_reader.services.reader_configuration import (
 )
 from rfid_reader.services.reader_connection import ReaderConnectionChecker
 from rfid_reader.services.tag_lookup import TagLookupService
+from rfid_reader.services.waveshare_configuration import (
+    DotEnvWaveshareConfigurationStore,
+    WaveshareConfigurationService,
+)
 
 __all__ = [
     "ConnectionMonitor",
@@ -16,4 +20,6 @@ __all__ = [
     "ReaderConfigurationService",
     "ReaderConnectionChecker",
     "TagLookupService",
+    "DotEnvWaveshareConfigurationStore",
+    "WaveshareConfigurationService",
 ]

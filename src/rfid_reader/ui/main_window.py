@@ -19,6 +19,8 @@ from rfid_reader.domain import (
     TagLookupEvent,
     TagLookupSessionStarted,
     TagLookupSessionSummary,
+    WaveshareConfigurationFeedback,
+    WaveshareConnectionSettings,
 )
 from rfid_reader.ui.components import (
     APP_BACKGROUND,
@@ -52,21 +54,27 @@ class MainWindow:
         inventory_updates: queue.SimpleQueue[InventoryEvent],
         lookup_updates: queue.SimpleQueue[TagLookupEvent],
         configuration_updates: queue.SimpleQueue[ReaderConfigurationFeedback],
+        waveshare_configuration_updates: queue.SimpleQueue[WaveshareConfigurationFeedback],
         on_close: Callable[[], None],
         on_start_inventory: Callable[[], object],
         on_stop_inventory: Callable[[], object],
         get_reader_settings: Callable[[], ReaderConnectionSettings],
         on_test_connection: Callable[[str, str, str], object],
         on_save_configuration: Callable[[str, str, str], object],
+        get_waveshare_settings: Callable[[], WaveshareConnectionSettings],
+        on_test_waveshare: Callable[[str, str, str, str, str, str], object],
+        on_save_waveshare: Callable[[str, str, str, str, str, str], object],
     ) -> None:
         self._updates = updates
         self._inventory_updates = inventory_updates
         self._lookup_updates = lookup_updates
         self._configuration_updates = configuration_updates
+        self._waveshare_configuration_updates = waveshare_configuration_updates
         self._lookup_session_id = 0
         self._lookup_summary = TagLookupSessionSummary()
         self._on_close = on_close
         self._get_reader_settings = get_reader_settings
+        self._get_waveshare_settings = get_waveshare_settings
         self._closing = False
         self._navigation = NavigationState()
         self._root = tk.Tk()
@@ -97,6 +105,9 @@ class MainWindow:
             get_reader_settings(),
             on_test_connection,
             on_save_configuration,
+            get_waveshare_settings(),
+            on_test_waveshare,
+            on_save_waveshare,
         )
         self._content.add_page(
             PageId.SYSTEM_STATUS,
@@ -116,6 +127,7 @@ class MainWindow:
         self._sidebar.select(page)
         if page is PageId.RFID_SETTINGS:
             self._settings_page.set_settings(self._get_reader_settings())
+            self._settings_page.set_waveshare_settings(self._get_waveshare_settings())
         self._content.show(page)
 
     def _drain_updates(self) -> None:
@@ -128,6 +140,7 @@ class MainWindow:
         self._drain_inventory_updates()
         self._drain_lookup_updates()
         self._drain_configuration_updates()
+        self._drain_waveshare_configuration_updates()
         if not self._closing:
             self._root.after(100, self._drain_updates)
 
@@ -170,6 +183,14 @@ class MainWindow:
             except queue.Empty:
                 return
             self._settings_page.apply_feedback(event)
+
+    def _drain_waveshare_configuration_updates(self) -> None:
+        while True:
+            try:
+                event = self._waveshare_configuration_updates.get_nowait()
+            except queue.Empty:
+                return
+            self._settings_page.apply_waveshare_feedback(event)
 
     def _set_status(self, kind: ConnectionKind, status: ConnectionStatus) -> None:
         self._connection_bar.set_status(kind, status)

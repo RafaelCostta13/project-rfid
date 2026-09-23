@@ -4,10 +4,12 @@ from rfid_reader.config import (
     ConfigurationError,
     ReaderConfigurationValidationError,
     Settings,
+    WaveshareConfigurationValidationError,
     load_config,
     validate_reader_connection,
+    validate_waveshare_connection,
 )
-from rfid_reader.domain import ReaderConnectionSettings
+from rfid_reader.domain import ReaderConnectionSettings, WaveshareConnectionSettings
 
 
 def valid_environment() -> dict[str, str]:
@@ -66,6 +68,84 @@ def test_uses_defaults_for_optional_values() -> None:
     assert settings.sharepoint_lookup_timeout_seconds == 10.0
     assert settings.sharepoint_lookup_queue_size == 100
     assert settings.log_level == "INFO"
+    assert settings.waveshare_connection == WaveshareConnectionSettings(
+        serial_port="",
+        baud_rate=9600,
+        data_bits=8,
+        parity="None",
+        stop_bits=1,
+        device_id=1,
+    )
+
+
+def test_loads_persisted_waveshare_configuration() -> None:
+    environment = valid_environment()
+    environment.update(
+        {
+            "WAVESHARE_SERIAL_PORT": " COM10 ",
+            "WAVESHARE_BAUD_RATE": "19200",
+            "WAVESHARE_DATA_BITS": "7",
+            "WAVESHARE_PARITY": "even",
+            "WAVESHARE_STOP_BITS": "2",
+            "WAVESHARE_DEVICE_ID": "15",
+        }
+    )
+
+    settings = load_config(environment)
+
+    assert settings.waveshare_connection == WaveshareConnectionSettings(
+        serial_port="COM10",
+        baud_rate=19200,
+        data_bits=7,
+        parity="Even",
+        stop_bits=2,
+        device_id=15,
+    )
+
+
+def test_validates_waveshare_form_and_allows_empty_port_for_save() -> None:
+    assert validate_waveshare_connection(" ", "9600", "8", "none", "1", "1") == (
+        WaveshareConnectionSettings("", 9600, 8, "None", 1, 1)
+    )
+
+
+def test_requires_waveshare_port_only_for_connection_test() -> None:
+    with pytest.raises(WaveshareConfigurationValidationError, match="porta COM"):
+        validate_waveshare_connection(
+            "",
+            "9600",
+            "8",
+            "None",
+            "1",
+            "1",
+            require_serial_port=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        (("COM5", "0", "8", "None", "1", "1"), "Baud rate"),
+        (("COM5", "9600", "9", "None", "1", "1"), "Data bits"),
+        (("COM5", "9600", "8", "invalid", "1", "1"), "Paridade"),
+        (("COM5", "9600", "8", "None", "3", "1"), "Stop bits"),
+        (("COM5", "9600", "8", "None", "1", "248"), "Device ID"),
+    ],
+)
+def test_rejects_invalid_waveshare_form_values(
+    values: tuple[str, str, str, str, str, str],
+    message: str,
+) -> None:
+    with pytest.raises(WaveshareConfigurationValidationError, match=message):
+        validate_waveshare_connection(*values)
+
+
+def test_invalid_persisted_waveshare_configuration_fails_with_variable_name() -> None:
+    environment = valid_environment()
+    environment["WAVESHARE_DEVICE_ID"] = "0"
+
+    with pytest.raises(ConfigurationError, match="WAVESHARE_DEVICE_ID"):
+        load_config(environment)
 
 
 @pytest.mark.parametrize("host", ["", "   "])

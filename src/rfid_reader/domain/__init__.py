@@ -24,6 +24,12 @@ from rfid_reader.domain.tag_lookup import (
     TagLookupStatus,
 )
 from rfid_reader.domain.tag_read import TagRead
+from rfid_reader.domain.waveshare_configuration import (
+    WaveshareConfigurationAction,
+    WaveshareConfigurationFeedback,
+    WaveshareConfigurationOutcome,
+    WaveshareConnectionSettings,
+)
 
 __all__ = [
     "ConnectionKind",
@@ -45,4 +51,8 @@ __all__ = [
     "TagLookupSessionSummary",
     "TagLookupSessionStarted",
     "TagLookupStatus",
+    "WaveshareConfigurationAction",
+    "WaveshareConfigurationFeedback",
+    "WaveshareConfigurationOutcome",
+    "WaveshareConnectionSettings",
 ]

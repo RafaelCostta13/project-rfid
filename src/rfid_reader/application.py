@@ -18,16 +18,19 @@ from rfid_reader.domain import (
     ReaderConnectionSettings,
     TagLookupEvent,
     TagReceived,
+    WaveshareConfigurationFeedback,
 )
-from rfid_reader.integrations import SharePointLookupClient
+from rfid_reader.integrations import PymodbusWaveshareConnectionTester, SharePointLookupClient
 from rfid_reader.readers import ZebraFX9600Reader
 from rfid_reader.services import (
     ConnectionMonitor,
     DotEnvReaderConfigurationStore,
+    DotEnvWaveshareConfigurationStore,
     ManualInventoryService,
     ReaderConfigurationService,
     ReaderConnectionChecker,
     TagLookupService,
+    WaveshareConfigurationService,
 )
 from rfid_reader.services.internet import InternetConnectionChecker
 
@@ -60,6 +63,9 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
     inventory_updates: queue.SimpleQueue[InventoryEvent] = queue.SimpleQueue()
     lookup_updates: queue.SimpleQueue[TagLookupEvent] = queue.SimpleQueue()
     configuration_updates: queue.SimpleQueue[ReaderConfigurationFeedback] = queue.SimpleQueue()
+    waveshare_configuration_updates: queue.SimpleQueue[WaveshareConfigurationFeedback] = (
+        queue.SimpleQueue()
+    )
     reader = ZebraFX9600Reader(
         settings.reader_host,
         settings.reader_port,
@@ -117,6 +123,12 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
         lambda: inventory.status is InventoryStatus.READING,
         configuration_updates.put,
     )
+    waveshare_configuration = WaveshareConfigurationService(
+        settings,
+        DotEnvWaveshareConfigurationStore(configuration_path),
+        PymodbusWaveshareConnectionTester(),
+        waveshare_configuration_updates.put,
+    )
 
     def stop_inventory() -> bool:
         lookup.stop_accepting()
@@ -125,6 +137,7 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
     def shutdown() -> None:
         stop_inventory()
         reader_configuration.close()
+        waveshare_configuration.close()
         monitor.stop()
         inventory.close()
         lookup.close()
@@ -135,16 +148,21 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
             inventory_updates,
             lookup_updates,
             configuration_updates,
+            waveshare_configuration_updates,
             shutdown,
             inventory.start,
             stop_inventory,
             reader_configuration.current,
             reader_configuration.test_connection,
             reader_configuration.save,
+            waveshare_configuration.current,
+            waveshare_configuration.test_connection,
+            waveshare_configuration.save,
         )
     except Exception as error:
         monitor.stop()
         reader_configuration.close()
+        waveshare_configuration.close()
         lookup.close()
         inventory.close()
         raise ApplicationError(f"não foi possível criar a janela principal: {error}") from error
