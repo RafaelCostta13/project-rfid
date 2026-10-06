@@ -164,3 +164,14 @@ def test_close_stops_inventory_before_disconnect() -> None:
     service.close()
 
     assert reader.operations == ["start", "stop", "disconnect"]
+
+
+def test_unconfirmed_stop_reports_error_and_disconnects() -> None:
+    reader = FakeReader()
+    service = ManualInventoryService(reader, lambda event: None)
+    service.start()
+    reader.inventorying = False
+
+    assert not service.stop()
+    assert service.status is InventoryStatus.ERROR
+    assert reader.disconnect_calls == 1

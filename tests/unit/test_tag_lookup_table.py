@@ -1,4 +1,4 @@
-from rfid_reader.domain import TagLookupResult, TagLookupStatus
+from rfid_reader.domain import InventoryStatus, TagLookupResult, TagLookupStatus
 from rfid_reader.ui.pages import (
     START_PAGE_TITLE,
     SUMMARY_CARD_TITLE,
@@ -44,6 +44,14 @@ class RecordingTable:
 
     def see(self, iid: str) -> None:
         pass
+
+
+class RecordingWidget:
+    def __init__(self) -> None:
+        self.options: dict[str, str] = {}
+
+    def configure(self, **options: str) -> None:
+        self.options.update(options)
 
 
 def test_start_page_exposes_only_found_summary_card() -> None:
@@ -140,3 +148,23 @@ def test_repeated_found_epc_updates_one_visual_row() -> None:
     assert table.insertions == ["tag-1"]
     assert table.updates == ["tag-1"]
     assert page._tag_rows == {"484C443031": "tag-1"}
+
+
+def test_automatic_mode_keeps_stop_available_while_waiting_for_di1() -> None:
+    page = object.__new__(SystemStatusPage)
+    page._automatic_enabled = False
+    page._inventory_status = InventoryStatus.STOPPED
+    page._inventory_status_label = RecordingWidget()
+    page._start_button = RecordingWidget()
+    page._stop_button = RecordingWidget()
+
+    page.set_automatic_enabled(True)
+
+    assert page._start_button.options["state"] == "disabled"
+    assert page._stop_button.options["state"] == "normal"
+    page.set_inventory_status(InventoryStatus.READING)
+    page.set_automatic_enabled(False)
+    assert page._stop_button.options["state"] == "normal"
+    page.set_inventory_status(InventoryStatus.STOPPED)
+    assert page._start_button.options["state"] == "normal"
+    assert page._stop_button.options["state"] == "disabled"

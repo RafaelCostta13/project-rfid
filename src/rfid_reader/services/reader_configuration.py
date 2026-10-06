@@ -39,11 +39,6 @@ SAVE_SUCCESS_MESSAGE = (
     "Configurações salvas com sucesso. Os novos dados serão usados na próxima conexão."
 )
 SAVE_FAILURE_MESSAGE = "Não foi possível salvar as configurações."
-READER_ENV_VARIABLES = (
-    "RFID_READER_NAME",
-    "RFID_READER_HOST",
-    "RFID_READER_PORT",
-)
 ReaderConfigurationListener = Callable[[ReaderConfigurationFeedback], None]
 TemporaryReaderFactory = Callable[[ReaderConnectionSettings], RFIDReader]
 
@@ -78,15 +73,26 @@ def _line_ending(line: str) -> str:
 
 
 class DotEnvReaderConfigurationStore:
-    """Atualiza somente as chaves do reader por substituição atômica."""
+    """Salva o reader e permite reutilizar a escrita atômica de chaves validadas."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
 
     def save(self, settings: ReaderConnectionSettings) -> None:
+        self.save_values(
+            {
+                "RFID_READER_NAME": _dotenv_value(settings.name),
+                "RFID_READER_HOST": _dotenv_value(settings.host),
+                "RFID_READER_PORT": str(settings.port),
+            }
+        )
+
+    def save_values(self, values: dict[str, str]) -> None:
+        """Reutiliza a escrita atômica para chaves validadas de configuração."""
+
         try:
             current = self._read_current()
-            updated = self._update_content(current, settings)
+            updated = self._update_values(current, values)
             self._replace(updated)
         except ReaderConfigurationWriteError:
             raise
@@ -103,15 +109,10 @@ class DotEnvReaderConfigurationStore:
             return ""
 
     @staticmethod
-    def _update_content(current: str, settings: ReaderConnectionSettings) -> str:
-        values = {
-            "RFID_READER_NAME": _dotenv_value(settings.name),
-            "RFID_READER_HOST": _dotenv_value(settings.host),
-            "RFID_READER_PORT": str(settings.port),
-        }
+    def _update_values(current: str, values: dict[str, str]) -> str:
         patterns = {
             variable: re.compile(rf"^(?P<prefix>\s*(?:export\s+)?{re.escape(variable)}\s*=).*$")
-            for variable in READER_ENV_VARIABLES
+            for variable in values
         }
         found: set[str] = set()
         lines: list[str] = []
@@ -127,7 +128,7 @@ class DotEnvReaderConfigurationStore:
             lines.append(f"{content}{ending}")
 
         newline = "\r\n" if "\r\n" in current else "\n"
-        missing = [variable for variable in READER_ENV_VARIABLES if variable not in found]
+        missing = [variable for variable in values if variable not in found]
         if missing and lines and not _line_ending(lines[-1]):
             lines[-1] = f"{lines[-1]}{newline}"
         lines.extend(f"{variable}={values[variable]}{newline}" for variable in missing)

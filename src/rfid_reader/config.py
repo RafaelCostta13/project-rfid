@@ -9,6 +9,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from ipaddress import IPv4Address
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from rfid_reader.domain import ReaderConnectionSettings, WaveshareConnectionSettings
@@ -20,8 +21,8 @@ DEFAULT_ANTENNAS = (1,)
 DEFAULT_DEDUPLICATION_WINDOW_SECONDS = 2.0
 DEFAULT_CONNECTION_TIMEOUT_SECONDS = 3.0
 DEFAULT_STATUS_CHECK_INTERVAL_SECONDS = 5.0
-DEFAULT_SHAREPOINT_LOOKUP_TIMEOUT_SECONDS = 10.0
-DEFAULT_SHAREPOINT_LOOKUP_QUEUE_SIZE = 100
+DEFAULT_SHAREPOINT_SYNC_TIMEOUT_SECONDS = 10.0
+DEFAULT_TAG_LOOKUP_QUEUE_SIZE = 100
 DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_WAVESHARE_SERIAL_PORT = ""
 DEFAULT_WAVESHARE_BAUD_RATE = 9600
@@ -29,6 +30,9 @@ DEFAULT_WAVESHARE_DATA_BITS = 8
 DEFAULT_WAVESHARE_PARITY = "None"
 DEFAULT_WAVESHARE_STOP_BITS = 1
 DEFAULT_WAVESHARE_DEVICE_ID = 1
+DEFAULT_SYNC_CHECK_INTERVAL_SECONDS = 60.0
+DEFAULT_LOCAL_DATABASE_FILENAME = "rfid-reader.sqlite3"
+STATION_DOCK_SUGGESTIONS = ("D01", "D02", "D03", "D04", "D05")
 KNOWN_LOG_LEVELS = frozenset(logging.getLevelNamesMapping())
 HOSTNAME_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 WAVESHARE_PARITIES = {
@@ -76,9 +80,10 @@ class Settings:
     deduplication_window_seconds: float
     connection_timeout_seconds: float
     status_check_interval_seconds: float
-    sharepoint_lookup_url: str
-    sharepoint_lookup_timeout_seconds: float
-    sharepoint_lookup_queue_size: int
+    sharepoint_sync_url: str
+    sharepoint_sync_timeout_seconds: float
+    tag_lookup_queue_size: int
+    local_database_path: Path
     log_level: str
     waveshare_serial_port: str = DEFAULT_WAVESHARE_SERIAL_PORT
     waveshare_baud_rate: int = DEFAULT_WAVESHARE_BAUD_RATE
@@ -86,6 +91,8 @@ class Settings:
     waveshare_parity: str = DEFAULT_WAVESHARE_PARITY
     waveshare_stop_bits: int = DEFAULT_WAVESHARE_STOP_BITS
     waveshare_device_id: int = DEFAULT_WAVESHARE_DEVICE_ID
+    station_dock: str = ""
+    sync_check_interval_seconds: float = DEFAULT_SYNC_CHECK_INTERVAL_SECONDS
 
     @property
     def reader_connection(self) -> ReaderConnectionSettings:
@@ -132,6 +139,35 @@ class Settings:
             waveshare_stop_bits=connection.stop_bits,
             waveshare_device_id=connection.device_id,
         )
+
+
+def validate_station_dock(value: str) -> str:
+    """Aceita ausência explícita ou código de estação, sem inventar uma Doca."""
+
+    dock = value.strip().upper()
+    if dock and re.fullmatch(r"[A-Z0-9][A-Z0-9_-]{0,31}", dock) is None:
+        raise ConfigurationError(
+            "RFID_STATION_DOCK: use até 32 letras, números, hífen ou sublinhado."
+        )
+    return dock
+
+
+def _sync_check_interval(environment: Mapping[str, str]) -> float:
+    variable = "SYNC_CHECK_INTERVAL_SECONDS"
+    interval = _positive_float(environment, variable, DEFAULT_SYNC_CHECK_INTERVAL_SECONDS)
+    if interval < 30:
+        raise ConfigurationError(f"{variable} deve ser maior ou igual a 30 segundos")
+    return interval
+
+
+def _default_local_database_path(environment: Mapping[str, str]) -> Path:
+    configured = environment.get("RFID_LOCAL_DATABASE_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    local_app_data = environment.get("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data) / "rfid-reader" / DEFAULT_LOCAL_DATABASE_FILENAME
+    return Path.home() / "AppData" / "Local" / "rfid-reader" / DEFAULT_LOCAL_DATABASE_FILENAME
 
 
 def _required_text(environment: Mapping[str, str], variable: str) -> str:
@@ -427,17 +463,18 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
             "RFID_STATUS_CHECK_INTERVAL_SECONDS",
             DEFAULT_STATUS_CHECK_INTERVAL_SECONDS,
         ),
-        sharepoint_lookup_url=_required_https_url(source, "SHAREPOINT_LOOKUP_URL"),
-        sharepoint_lookup_timeout_seconds=_positive_float(
+        sharepoint_sync_url=_required_https_url(source, "SHAREPOINT_SYNC_URL"),
+        sharepoint_sync_timeout_seconds=_positive_float(
             source,
-            "SHAREPOINT_LOOKUP_TIMEOUT_SECONDS",
-            DEFAULT_SHAREPOINT_LOOKUP_TIMEOUT_SECONDS,
+            "SHAREPOINT_SYNC_TIMEOUT_SECONDS",
+            DEFAULT_SHAREPOINT_SYNC_TIMEOUT_SECONDS,
         ),
-        sharepoint_lookup_queue_size=_positive_integer(
+        tag_lookup_queue_size=_positive_integer(
             source,
-            "SHAREPOINT_LOOKUP_QUEUE_SIZE",
-            DEFAULT_SHAREPOINT_LOOKUP_QUEUE_SIZE,
+            "TAG_LOOKUP_QUEUE_SIZE",
+            DEFAULT_TAG_LOOKUP_QUEUE_SIZE,
         ),
+        local_database_path=_default_local_database_path(source),
         log_level=_log_level(source),
         waveshare_serial_port=waveshare_connection.serial_port,
         waveshare_baud_rate=waveshare_connection.baud_rate,
@@ -445,4 +482,6 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
         waveshare_parity=waveshare_connection.parity,
         waveshare_stop_bits=waveshare_connection.stop_bits,
         waveshare_device_id=waveshare_connection.device_id,
+        station_dock=validate_station_dock(source.get("RFID_STATION_DOCK", "")),
+        sync_check_interval_seconds=_sync_check_interval(source),
     )

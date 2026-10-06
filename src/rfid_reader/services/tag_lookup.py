@@ -17,13 +17,7 @@ from rfid_reader.domain import (
     TagLookupStatus,
     TagRead,
 )
-from rfid_reader.integrations.sharepoint_client import (
-    TagLookupClient,
-    TagLookupClientError,
-    TagLookupHttpError,
-    TagLookupResponseError,
-    TagLookupTimeoutError,
-)
+from rfid_reader.services.local_database import LocalDatabaseError, LocalTagRepository
 from rfid_reader.services.tag_validation import is_valid_epc
 
 LOGGER = logging.getLogger(__name__)
@@ -42,11 +36,13 @@ class TagLookupService:
 
     def __init__(
         self,
-        client: TagLookupClient,
+        repository: LocalTagRepository,
+        dock_getter: Callable[[], str],
         queue_size: int,
         listener: TagLookupListener,
     ) -> None:
-        self._client = client
+        self._repository = repository
+        self._dock_getter = dock_getter
         self._listener = listener
         self._queue: queue.Queue[_LookupTask] = queue.Queue(maxsize=queue_size)
         self._lock = threading.Lock()
@@ -84,6 +80,14 @@ class TagLookupService:
     def submit(self, tag: TagRead) -> bool:
         """Agenda uma consulta sem bloquear a thread que entregou a leitura."""
 
+        LOGGER.info(
+            "tag_read_received reader_id=%s antenna=%s epc=%s rssi=%s read_at=%s",
+            tag.reader_id,
+            tag.antenna_id,
+            tag.epc,
+            tag.rssi,
+            tag.read_at.isoformat(),
+        )
         if not is_valid_epc(tag.epc):
             LOGGER.warning(
                 "tag_lookup_invalid_epc_ignored reader_id=%s antenna=%s epc=%s",
@@ -138,26 +142,11 @@ class TagLookupService:
             task.key.antenna_id,
             task.key.epc,
         )
+        dock = self._dock_getter()
         try:
-            result = self._client.lookup(task.key.epc)
-        except TagLookupTimeoutError:
-            LOGGER.warning("tag_lookup_timeout epc=%s", task.key.epc)
-            self._emit_error_if_current(task)
-            return
-        except TagLookupHttpError as error:
-            LOGGER.warning(
-                "tag_lookup_http_error epc=%s status_code=%s",
-                task.key.epc,
-                error.status_code,
-            )
-            self._emit_error_if_current(task)
-            return
-        except TagLookupResponseError as error:
-            LOGGER.warning("tag_lookup_invalid_response epc=%s error=%s", task.key.epc, error)
-            self._emit_error_if_current(task)
-            return
-        except TagLookupClientError as error:
-            LOGGER.warning("tag_lookup_network_error epc=%s error=%s", task.key.epc, error)
+            result = self._repository.find_by_epc(task.key.epc, dock)
+        except LocalDatabaseError:
+            LOGGER.exception("tag_lookup_local_database_error epc=%s dock=%s", task.key.epc, dock)
             self._emit_error_if_current(task)
             return
         except Exception:
@@ -165,6 +154,9 @@ class TagLookupService:
             self._emit_error_if_current(task)
             return
 
+        if result is None:
+            LOGGER.debug("tag_lookup_not_found epc=%s dock=%s", task.key.epc, dock)
+            return
         if not self._is_current_session(task.session_id):
             LOGGER.debug("tag_lookup_stale_result_ignored epc=%s", task.key.epc)
             return

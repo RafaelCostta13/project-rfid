@@ -22,6 +22,8 @@ from rfid_reader.domain import (
     WaveshareConfigurationFeedback,
     WaveshareConnectionSettings,
 )
+from rfid_reader.services.station_configuration import StationConfigurationFeedback
+from rfid_reader.services.waveshare_diagnostic import DiagnosticEvent
 from rfid_reader.ui.components import (
     APP_BACKGROUND,
     ConnectionBar,
@@ -31,6 +33,7 @@ from rfid_reader.ui.components import (
 )
 from rfid_reader.ui.navigation import NavigationState, PageId
 from rfid_reader.ui.pages import RFIDSettingsPage, SystemStatusPage
+from rfid_reader.ui.waveshare_diagnostic_page import WaveshareDiagnosticPage
 
 
 def maximize_window(root: tk.Tk) -> None:
@@ -55,6 +58,7 @@ class MainWindow:
         lookup_updates: queue.SimpleQueue[TagLookupEvent],
         configuration_updates: queue.SimpleQueue[ReaderConfigurationFeedback],
         waveshare_configuration_updates: queue.SimpleQueue[WaveshareConfigurationFeedback],
+        automatic_mode_updates: queue.SimpleQueue[bool],
         on_close: Callable[[], None],
         on_start_inventory: Callable[[], object],
         on_stop_inventory: Callable[[], object],
@@ -64,17 +68,31 @@ class MainWindow:
         get_waveshare_settings: Callable[[], WaveshareConnectionSettings],
         on_test_waveshare: Callable[[str, str, str, str, str, str], object],
         on_save_waveshare: Callable[[str, str, str, str, str, str], object],
+        diagnostic_updates: queue.SimpleQueue[DiagnosticEvent],
+        on_connect_diagnostic: Callable[[], None],
+        on_disconnect_diagnostic: Callable[[], None],
+        on_diagnostic_relay: Callable[[int, bool], None],
+        on_connect_automatic: Callable[[], None] | None = None,
+        is_automatic: Callable[[], bool] = lambda: False,
+        *,
+        get_station_dock: Callable[[], str] = lambda: "",
+        on_save_station_dock: Callable[[str], StationConfigurationFeedback] | None = None,
     ) -> None:
         self._updates = updates
         self._inventory_updates = inventory_updates
         self._lookup_updates = lookup_updates
         self._configuration_updates = configuration_updates
         self._waveshare_configuration_updates = waveshare_configuration_updates
+        self._automatic_mode_updates = automatic_mode_updates
+        self._diagnostic_updates = diagnostic_updates
+        self._on_disconnect_diagnostic = on_disconnect_diagnostic
+        self._is_automatic = is_automatic
         self._lookup_session_id = 0
         self._lookup_summary = TagLookupSessionSummary()
         self._on_close = on_close
         self._get_reader_settings = get_reader_settings
         self._get_waveshare_settings = get_waveshare_settings
+        self._get_station_dock = get_station_dock
         self._closing = False
         self._navigation = NavigationState()
         self._root = tk.Tk()
@@ -108,6 +126,17 @@ class MainWindow:
             get_waveshare_settings(),
             on_test_waveshare,
             on_save_waveshare,
+            self._open_waveshare_diagnostic,
+            station_dock=get_station_dock(),
+            on_save_station_dock=on_save_station_dock,
+        )
+        self._diagnostic_page = WaveshareDiagnosticPage(
+            self._content,
+            on_connect_diagnostic,
+            on_disconnect_diagnostic,
+            on_diagnostic_relay,
+            self._back_from_waveshare_diagnostic,
+            on_connect_automatic,
         )
         self._content.add_page(
             PageId.SYSTEM_STATUS,
@@ -117,18 +146,42 @@ class MainWindow:
             PageId.RFID_SETTINGS,
             self._settings_page,
         )
+        self._content.add_page(PageId.WAVESHARE_DIAGNOSTIC, self._diagnostic_page)
         self._select_page(PageId.SYSTEM_STATUS)
         maximize_window(self._root)
         self._root.after_idle(maximize_window, self._root)
         self._root.after(100, self._drain_updates)
 
     def _select_page(self, page: PageId) -> None:
+        if (
+            self._navigation.current_page is PageId.WAVESHARE_DIAGNOSTIC
+            and page is not PageId.WAVESHARE_DIAGNOSTIC
+            and not self._is_automatic()
+        ):
+            self._on_disconnect_diagnostic()
+            self._diagnostic_page.reset()
         self._navigation.select(page)
-        self._sidebar.select(page)
+        self._sidebar.select(PageId.RFID_SETTINGS if page is PageId.WAVESHARE_DIAGNOSTIC else page)
         if page is PageId.RFID_SETTINGS:
             self._settings_page.set_settings(self._get_reader_settings())
             self._settings_page.set_waveshare_settings(self._get_waveshare_settings())
+            self._settings_page.set_station_dock(self._get_station_dock())
         self._content.show(page)
+
+    def _open_waveshare_diagnostic(self) -> None:
+        if self._is_automatic():
+            self._select_page(PageId.WAVESHARE_DIAGNOSTIC)
+            return
+        while True:
+            try:
+                self._diagnostic_updates.get_nowait()
+            except queue.Empty:
+                break
+        self._diagnostic_page.reset()
+        self._select_page(PageId.WAVESHARE_DIAGNOSTIC)
+
+    def _back_from_waveshare_diagnostic(self) -> None:
+        self._select_page(PageId.RFID_SETTINGS)
 
     def _drain_updates(self) -> None:
         while True:
@@ -141,6 +194,8 @@ class MainWindow:
         self._drain_lookup_updates()
         self._drain_configuration_updates()
         self._drain_waveshare_configuration_updates()
+        self._drain_automatic_mode_updates()
+        self._drain_diagnostic_updates()
         if not self._closing:
             self._root.after(100, self._drain_updates)
 
@@ -191,6 +246,23 @@ class MainWindow:
             except queue.Empty:
                 return
             self._settings_page.apply_waveshare_feedback(event)
+
+    def _drain_automatic_mode_updates(self) -> None:
+        while True:
+            try:
+                enabled = self._automatic_mode_updates.get_nowait()
+            except queue.Empty:
+                return
+            self._status_page.set_automatic_enabled(enabled)
+
+    def _drain_diagnostic_updates(self) -> None:
+        while True:
+            try:
+                event = self._diagnostic_updates.get_nowait()
+            except queue.Empty:
+                return
+            if self._navigation.current_page is PageId.WAVESHARE_DIAGNOSTIC or self._is_automatic():
+                self._diagnostic_page.apply(event)
 
     def _set_status(self, kind: ConnectionKind, status: ConnectionStatus) -> None:
         self._connection_bar.set_status(kind, status)

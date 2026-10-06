@@ -25,10 +25,12 @@ class FakeLowLevelClient:
         self.start_force_regen: list[bool] = []
         self.stop_calls = 0
         self.states: list[int] = []
+        self.on_start: Callable[[], None] = lambda: None
 
     def startInventory(self, force_regen_rospec: bool = False) -> None:
         self.start_calls += 1
         self.start_force_regen.append(force_regen_rospec)
+        self.on_start()
 
     def stopPolitely(self, onCompletion: Callable[..., None] | None = None) -> None:
         self.stop_calls += 1
@@ -42,6 +44,7 @@ class FakeLowLevelClient:
 class FakeSllurpClient:
     def __init__(self, *, configure_on_connect: bool = True) -> None:
         self.llrp = FakeLowLevelClient()
+        self.llrp.on_start = self.emit_inventorying
         self._configure_on_connect = configure_on_connect
         self._message_callbacks: dict[str, Callable[..., None]] = {}
         self._state_callbacks: dict[int, Callable[..., None]] = {}
@@ -272,3 +275,17 @@ def test_disconnect_stops_inventory_before_closing_session() -> None:
     assert client.llrp.stop_calls == 1
     assert client.disconnect_calls == 1
     assert not reader.is_connected()
+
+
+def test_start_without_inventory_confirmation_times_out_and_disconnects() -> None:
+    client = FakeSllurpClient()
+    client.llrp.on_start = lambda: None
+    reader = create_reader(client, timeout=0.01)
+    reader.connect()
+
+    with pytest.raises(ReaderConnectionError, match="confirmar"):
+        reader.start_inventory(lambda tag: None)
+
+    assert client.llrp.stop_calls == 1
+    assert not reader.is_connected()
+    assert not reader.is_inventorying()

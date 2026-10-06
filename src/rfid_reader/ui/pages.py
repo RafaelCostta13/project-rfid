@@ -6,6 +6,7 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import ttk
 
+from rfid_reader.config import STATION_DOCK_SUGGESTIONS
 from rfid_reader.domain import (
     ConnectionStatus,
     InventoryStatus,
@@ -20,6 +21,7 @@ from rfid_reader.domain import (
     WaveshareConfigurationOutcome,
     WaveshareConnectionSettings,
 )
+from rfid_reader.services.station_configuration import StationConfigurationFeedback
 from rfid_reader.ui.components import (
     APP_BACKGROUND,
     HEADER_BACKGROUND,
@@ -41,6 +43,7 @@ WAVESHARE_SETTINGS_FIELDS = (
 )
 TEST_CONNECTION_BUTTON_TEXT = "Testar conexão"
 SAVE_CONFIGURATION_BUTTON_TEXT = "Salvar configurações"
+WAVESHARE_DIAGNOSTIC_BUTTON_TEXT = "Testar Waveshare"
 TAG_TABLE_HEADINGS = (
     ("status", "Status"),
     ("customer", "Cliente"),
@@ -82,6 +85,8 @@ class SystemStatusPage(tk.Frame):
         self._tag_table: ttk.Treeview
         self._tag_rows: dict[str, str] = {}
         self._next_tag_row = 0
+        self._automatic_enabled = False
+        self._inventory_status = InventoryStatus.STOPPED
         self._build(on_start_inventory, on_stop_inventory)
 
     def _build(
@@ -149,7 +154,7 @@ class SystemStatusPage(tk.Frame):
         controls.pack(fill="x")
         tk.Label(
             controls,
-            text="Inventário RFID manual",
+            text="Inventário RFID automático",
             background=HEADER_BACKGROUND,
             foreground=TEXT_PRIMARY,
             font=("Segoe UI", 12, "bold"),
@@ -239,13 +244,23 @@ class SystemStatusPage(tk.Frame):
             InventoryStatus.READING: STATUS_COLORS[ConnectionStatus.CONNECTED],
             InventoryStatus.ERROR: STATUS_COLORS[ConnectionStatus.ERROR],
         }
-        reading = status is InventoryStatus.READING
+        self._inventory_status = status
         self._inventory_status_label.configure(
             text=f"● {status.value}",
             foreground=colors[status],
         )
-        self._start_button.configure(state="disabled" if reading else "normal")
-        self._stop_button.configure(state="normal" if reading else "disabled")
+        self._refresh_inventory_buttons()
+
+    def set_automatic_enabled(self, enabled: bool) -> None:
+        """Mantém os controles coerentes durante a espera pelos sensores."""
+
+        self._automatic_enabled = enabled
+        self._refresh_inventory_buttons()
+
+    def _refresh_inventory_buttons(self) -> None:
+        active = self._automatic_enabled or self._inventory_status is InventoryStatus.READING
+        self._start_button.configure(state="disabled" if active else "normal")
+        self._stop_button.configure(state="normal" if active else "disabled")
 
     def clear_tags(self) -> None:
         """Remove todas as leituras da sessão anterior."""
@@ -286,6 +301,7 @@ class WaveshareSettingsPanel(tk.Frame):
         settings: WaveshareConnectionSettings,
         on_test_connection: Callable[[str, str, str, str, str, str], object],
         on_save: Callable[[str, str, str, str, str, str], object],
+        on_open_diagnostic: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(
             parent,
@@ -301,6 +317,7 @@ class WaveshareSettingsPanel(tk.Frame):
         self._device_id_var = tk.StringVar(value=str(settings.device_id))
         self._on_test_connection = on_test_connection
         self._on_save = on_save
+        self._on_open_diagnostic = on_open_diagnostic
         self._test_button: tk.Button
         self._feedback_label: tk.Label
         self._build()
@@ -393,6 +410,19 @@ class WaveshareSettingsPanel(tk.Frame):
             justify="left",
         )
         self._feedback_label.grid(row=8, column=0, columnspan=2, sticky="w", pady=(18, 0))
+        if self._on_open_diagnostic is not None:
+            tk.Button(
+                self,
+                text=WAVESHARE_DIAGNOSTIC_BUTTON_TEXT,
+                command=self._on_open_diagnostic,
+                background="#1D4ED8",
+                foreground="#FFFFFF",
+                borderwidth=0,
+                cursor="hand2",
+                font=("Segoe UI", 10, "bold"),
+                padx=16,
+                pady=9,
+            ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(16, 0))
 
     def _values(self) -> tuple[str, str, str, str, str, str]:
         return (
@@ -456,9 +486,15 @@ class RFIDSettingsPage(tk.Frame):
         waveshare_settings: WaveshareConnectionSettings,
         on_test_waveshare: Callable[[str, str, str, str, str, str], object],
         on_save_waveshare: Callable[[str, str, str, str, str, str], object],
+        on_open_waveshare_diagnostic: Callable[[], None] | None = None,
+        *,
+        station_dock: str = "",
+        on_save_station_dock: Callable[[str], StationConfigurationFeedback] | None = None,
     ) -> None:
         super().__init__(parent, background=APP_BACKGROUND, padx=32, pady=28)
         self._reader_name_var = tk.StringVar(value=settings.name)
+        self._station_dock_var = tk.StringVar(value=station_dock)
+        self._on_save_station_dock = on_save_station_dock
         self._reader_host_var = tk.StringVar(value=settings.host)
         self._reader_port_var = tk.StringVar(value=str(settings.port))
         self._on_test_connection = on_test_connection
@@ -468,6 +504,7 @@ class RFIDSettingsPage(tk.Frame):
         self._waveshare_settings = waveshare_settings
         self._on_test_waveshare = on_test_waveshare
         self._on_save_waveshare = on_save_waveshare
+        self._on_open_waveshare_diagnostic = on_open_waveshare_diagnostic
         self._waveshare_panel: WaveshareSettingsPanel
         self._build()
 
@@ -487,8 +524,27 @@ class RFIDSettingsPage(tk.Frame):
             font=("Segoe UI", 10),
         ).pack(anchor="w", pady=(4, 24))
 
-        cards = tk.Frame(self, background=APP_BACKGROUND)
-        cards.pack(fill="both", expand=True)
+        viewport = tk.Frame(self, background=APP_BACKGROUND)
+        viewport.pack(fill="both", expand=True)
+        viewport.rowconfigure(0, weight=1)
+        viewport.columnconfigure(0, weight=1)
+        canvas = tk.Canvas(
+            viewport, background=APP_BACKGROUND, highlightthickness=0, width=1, height=1
+        )
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vertical = ttk.Scrollbar(viewport, orient="vertical", command=canvas.yview)
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal = ttk.Scrollbar(viewport, orient="horizontal", command=canvas.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+        canvas.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        cards = tk.Frame(canvas, background=APP_BACKGROUND)
+        cards_window = canvas.create_window(0, 0, window=cards, anchor="nw")
+
+        def resize_cards(event: tk.Event[tk.Canvas]) -> None:
+            canvas.itemconfigure(cards_window, width=max(event.width, cards.winfo_reqwidth()))
+
+        canvas.bind("<Configure>", resize_cards)
+        cards.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
         cards.columnconfigure(0, weight=1)
         cards.columnconfigure(1, weight=1)
 
@@ -573,11 +629,50 @@ class RFIDSettingsPage(tk.Frame):
         )
         self._feedback_label.grid(row=8, column=0, sticky="w", pady=(18, 0))
 
+        station_actions = tk.Frame(form, background=HEADER_BACKGROUND)
+        station_actions.grid(row=9, column=0, sticky="ew", pady=(16, 0))
+        tk.Label(
+            station_actions,
+            text="Doca",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_PRIMARY,
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left", padx=(0, 10))
+        ttk.Combobox(
+            station_actions,
+            textvariable=self._station_dock_var,
+            values=STATION_DOCK_SUGGESTIONS,
+            width=8,
+        ).pack(side="left", padx=(0, 10))
+        tk.Button(
+            station_actions,
+            text="Salvar Doca",
+            command=self._request_save_station_dock,
+            background="#16803C",
+            foreground="#FFFFFF",
+            borderwidth=0,
+            font=("Segoe UI", 10, "bold"),
+            padx=16,
+            pady=9,
+            state="normal" if self._on_save_station_dock is not None else "disabled",
+        ).pack(side="left")
+        self._station_feedback_label = tk.Label(
+            form,
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_MUTED,
+            font=("Segoe UI", 10),
+            wraplength=320,
+            justify="left",
+        )
+        self._station_feedback_label.grid(row=10, column=0, sticky="w", pady=(6, 0))
+        self.set_station_dock(self._station_dock_var.get())
+
         self._waveshare_panel = WaveshareSettingsPanel(
             cards,
             self._waveshare_settings,
             self._on_test_waveshare,
             self._on_save_waveshare,
+            self._on_open_waveshare_diagnostic,
         )
         self._waveshare_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
@@ -586,6 +681,26 @@ class RFIDSettingsPage(tk.Frame):
             self._reader_name_var.get(),
             self._reader_host_var.get(),
             self._reader_port_var.get(),
+        )
+
+    def set_station_dock(self, dock: str) -> None:
+        """Apresenta a Doca atual sem substituir ausência por uma sugestão."""
+
+        self._station_dock_var.set(dock)
+        self._station_feedback_label.configure(
+            text=f"Doca configurada: {dock}" if dock else "Configure a Doca desta estação.",
+            foreground=TEXT_MUTED,
+        )
+
+    def _request_save_station_dock(self) -> None:
+        if self._on_save_station_dock is None:
+            return
+        feedback = self._on_save_station_dock(self._station_dock_var.get())
+        if feedback.dock is not None:
+            self._station_dock_var.set(feedback.dock)
+        self._station_feedback_label.configure(
+            text=feedback.message,
+            foreground="#16803C" if feedback.success else "#B42318",
         )
 
     def _request_test(self) -> None:

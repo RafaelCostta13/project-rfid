@@ -31,18 +31,20 @@ class FailingChecker:
 def test_publishes_initial_and_changed_states_independently() -> None:
     rfid = FakeChecker([ConnectionStatus.CONNECTED])
     internet = FakeChecker([ConnectionStatus.DISCONNECTED])
+    waveshare = FakeChecker([ConnectionStatus.CONNECTED])
     updates: list[tuple[ConnectionKind, ConnectionStatus]] = []
     completed = threading.Event()
 
     def listener(kind: ConnectionKind, status: ConnectionStatus) -> None:
         updates.append((kind, status))
-        if len(updates) >= 4:
+        if len(updates) >= 6:
             completed.set()
 
     monitor = ConnectionMonitor(
         {
             ConnectionKind.RFID: rfid,
             ConnectionKind.INTERNET: internet,
+            ConnectionKind.WAVESHARE: waveshare,
         },
         1.0,
         listener,
@@ -56,8 +58,11 @@ def test_publishes_initial_and_changed_states_independently() -> None:
     assert (ConnectionKind.INTERNET, ConnectionStatus.CHECKING) in updates
     assert (ConnectionKind.RFID, ConnectionStatus.CONNECTED) in updates
     assert (ConnectionKind.INTERNET, ConnectionStatus.DISCONNECTED) in updates
+    assert (ConnectionKind.WAVESHARE, ConnectionStatus.CHECKING) in updates
+    assert (ConnectionKind.WAVESHARE, ConnectionStatus.CONNECTED) in updates
     assert rfid.closed
     assert internet.closed
+    assert waveshare.closed
 
 
 def test_converts_checker_failure_to_error_without_stopping_other_checker() -> None:

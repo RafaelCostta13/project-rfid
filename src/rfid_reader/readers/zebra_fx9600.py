@@ -252,6 +252,7 @@ class ZebraFX9600Reader:
                 self._inventory_requested = True
                 self._accept_reports = True
                 self._stop_complete.clear()
+                self._inventorying.clear()
             if client is None:
                 raise ReaderConnectionError("o reader não está conectado")
             try:
@@ -268,6 +269,9 @@ class ZebraFX9600Reader:
                 self._reader_id,
                 self._antenna_id,
             )
+            if not self._inventorying.wait(self._timeout_seconds) or not self.is_connected():
+                self.disconnect()
+                raise ReaderTimeoutError("timeout ao confirmar o início do inventário")
             return True
 
     def _on_inventorying(self, client: SllurpReaderClient, state: int) -> None:

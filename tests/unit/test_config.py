@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 
 from rfid_reader.config import (
     ConfigurationError,
@@ -19,7 +19,8 @@ def valid_environment() -> dict[str, str]:
         "RFID_READER_NAME": "fx9600-01",
         "RFID_ANTENNAS": "1",
         "RFID_DEDUPLICATION_WINDOW_SECONDS": "2.5",
-        "SHAREPOINT_LOOKUP_URL": "https://example.test/lookup",
+        "SHAREPOINT_SYNC_URL": "https://example.test/sync",
+        "LOCALAPPDATA": "C:/Users/test/AppData/Local",
         "RFID_LOG_LEVEL": "INFO",
     }
 
@@ -35,9 +36,10 @@ def test_loads_complete_valid_configuration_and_converts_types() -> None:
         deduplication_window_seconds=2.5,
         connection_timeout_seconds=3.0,
         status_check_interval_seconds=5.0,
-        sharepoint_lookup_url="https://example.test/lookup",
-        sharepoint_lookup_timeout_seconds=10.0,
-        sharepoint_lookup_queue_size=100,
+        sharepoint_sync_url="https://example.test/sync",
+        sharepoint_sync_timeout_seconds=10.0,
+        tag_lookup_queue_size=100,
+        local_database_path=settings.local_database_path,
         log_level="INFO",
     )
 
@@ -54,7 +56,8 @@ def test_loads_multiple_antennas_and_normalizes_duplicates() -> None:
 def test_uses_defaults_for_optional_values() -> None:
     settings = load_config(
         {
-            "SHAREPOINT_LOOKUP_URL": "https://example.test/lookup",
+            "SHAREPOINT_SYNC_URL": "https://example.test/sync",
+            "LOCALAPPDATA": "C:/Users/test/AppData/Local",
         }
     )
 
@@ -65,8 +68,9 @@ def test_uses_defaults_for_optional_values() -> None:
     assert settings.deduplication_window_seconds == 2.0
     assert settings.connection_timeout_seconds == 3.0
     assert settings.status_check_interval_seconds == 5.0
-    assert settings.sharepoint_lookup_timeout_seconds == 10.0
-    assert settings.sharepoint_lookup_queue_size == 100
+    assert settings.sharepoint_sync_timeout_seconds == 10.0
+    assert settings.tag_lookup_queue_size == 100
+    assert str(settings.local_database_path).endswith("rfid-reader.sqlite3")
     assert settings.log_level == "INFO"
     assert settings.waveshare_connection == WaveshareConnectionSettings(
         serial_port="",
@@ -268,23 +272,25 @@ def test_rejects_invalid_connection_timing(variable: str, value: str) -> None:
 
 @pytest.mark.parametrize(
     "url",
-    ["", " ", "not-a-url", "http://example.test/lookup"],
+    ["", " ", "not-a-url", "http://example.test/sync"],
 )
 def test_rejects_missing_or_invalid_sharepoint_url(url: str) -> None:
     environment = valid_environment()
-    environment["SHAREPOINT_LOOKUP_URL"] = url
+    environment["SHAREPOINT_SYNC_URL"] = url
 
-    with pytest.raises(ConfigurationError, match="SHAREPOINT_LOOKUP_URL"):
+    with pytest.raises(ConfigurationError, match="SHAREPOINT_SYNC_URL"):
         load_config(environment)
 
 
 @pytest.mark.parametrize(
     ("variable", "value"),
     [
-        ("SHAREPOINT_LOOKUP_TIMEOUT_SECONDS", "0"),
-        ("SHAREPOINT_LOOKUP_TIMEOUT_SECONDS", "invalid"),
-        ("SHAREPOINT_LOOKUP_QUEUE_SIZE", "0"),
-        ("SHAREPOINT_LOOKUP_QUEUE_SIZE", "1.5"),
+        ("SHAREPOINT_SYNC_TIMEOUT_SECONDS", "0"),
+        ("SHAREPOINT_SYNC_TIMEOUT_SECONDS", "invalid"),
+        ("TAG_LOOKUP_QUEUE_SIZE", "0"),
+        ("TAG_LOOKUP_QUEUE_SIZE", "1.5"),
+        ("SYNC_CHECK_INTERVAL_SECONDS", "1"),
+        ("SYNC_CHECK_INTERVAL_SECONDS", "nan"),
     ],
 )
 def test_rejects_invalid_sharepoint_limits(variable: str, value: str) -> None:
@@ -293,3 +299,4 @@ def test_rejects_invalid_sharepoint_limits(variable: str, value: str) -> None:
 
     with pytest.raises(ConfigurationError, match=variable):
         load_config(environment)
+

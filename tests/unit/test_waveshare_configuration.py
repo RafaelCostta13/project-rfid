@@ -1,4 +1,4 @@
-import threading
+﻿import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -35,9 +35,10 @@ def application_settings() -> Settings:
         deduplication_window_seconds=2.0,
         connection_timeout_seconds=3.0,
         status_check_interval_seconds=5.0,
-        sharepoint_lookup_url="https://example.test/lookup",
-        sharepoint_lookup_timeout_seconds=10.0,
-        sharepoint_lookup_queue_size=100,
+        sharepoint_sync_url="https://example.test/sync",
+        sharepoint_sync_timeout_seconds=10.0,
+        tag_lookup_queue_size=100,
+        local_database_path=Path("local.sqlite3"),
         log_level="INFO",
     )
 
@@ -91,7 +92,7 @@ def form_values(port: str = "COM5") -> tuple[str, str, str, str, str, str]:
 def test_dotenv_store_preserves_other_keys_and_persists_all_values(tmp_path: Path) -> None:
     path = tmp_path / ".env"
     path.write_text(
-        "RFID_READER_HOST=192.168.0.214\nSHAREPOINT_LOOKUP_URL=https://secret.test/?sig=secret\n",
+        "RFID_READER_HOST=192.168.0.214\nSHAREPOINT_SYNC_URL=https://secret.test/?sig=secret\n",
         encoding="utf-8",
     )
 
@@ -101,7 +102,7 @@ def test_dotenv_store_preserves_other_keys_and_persists_all_values(tmp_path: Pat
 
     assert dotenv_values(path) == {
         "RFID_READER_HOST": "192.168.0.214",
-        "SHAREPOINT_LOOKUP_URL": "https://secret.test/?sig=secret",
+        "SHAREPOINT_SYNC_URL": "https://secret.test/?sig=secret",
         "WAVESHARE_SERIAL_PORT": "COM10",
         "WAVESHARE_BAUD_RATE": "19200",
         "WAVESHARE_DATA_BITS": "7",
@@ -236,3 +237,4 @@ def test_prevents_simultaneous_connection_tests() -> None:
     finally:
         release.set()
         service.close()
+

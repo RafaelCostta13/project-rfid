@@ -8,6 +8,9 @@ class ConnectionKind(StrEnum):
 
     RFID = "rfid"
     INTERNET = "internet"
+    WAVESHARE = "waveshare"
+    DATABASE = "database"
+    SYNC = "sync"
 
 
 class ConnectionStatus(StrEnum):

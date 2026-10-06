@@ -22,6 +22,7 @@ class RecordingStatusPage:
         self.summaries: list[int] = []
         self.rows: dict[str, TagLookupResult] = {}
         self.inventory_statuses: list[InventoryStatus] = []
+        self.automatic_modes: list[bool] = []
 
     def clear_tags(self) -> None:
         self.clears += 1
@@ -35,6 +36,9 @@ class RecordingStatusPage:
 
     def set_inventory_status(self, status: InventoryStatus) -> None:
         self.inventory_statuses.append(status)
+
+    def set_automatic_enabled(self, enabled: bool) -> None:
+        self.automatic_modes.append(enabled)
 
 
 def lookup_event(
@@ -123,3 +127,14 @@ def test_inventory_clear_resets_card_but_stop_preserves_it() -> None:
     inventory_updates.put(InventoryCleared())
     window._drain_inventory_updates()
     assert page.summaries[-1] == 0
+
+
+def test_automatic_mode_updates_start_page_controls() -> None:
+    window, _, _, page = window_without_tk()
+    window._automatic_mode_updates = queue.SimpleQueue()
+    window._automatic_mode_updates.put(True)
+    window._automatic_mode_updates.put(False)
+
+    window._drain_automatic_mode_updates()
+
+    assert page.automatic_modes == [True, False]

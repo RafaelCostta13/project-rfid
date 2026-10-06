@@ -64,6 +64,8 @@ class ConnectionMonitor:
             except Exception:
                 LOGGER.exception("connection_check_failed connection=%s", kind.value)
                 status = ConnectionStatus.ERROR
+            if self._stop_event.is_set():
+                return
             self._set_status(kind, status)
             if self._stop_event.wait(self._interval_seconds):
                 return

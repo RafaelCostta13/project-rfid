@@ -8,6 +8,7 @@ from rfid_reader.domain.inventory import (
     InventoryStatusChanged,
     TagReceived,
 )
+from rfid_reader.domain.local_tag import LocalTagRecord, SyncControl
 from rfid_reader.domain.reader_configuration import (
     ReaderConfigurationAction,
     ReaderConfigurationFeedback,
@@ -38,10 +39,12 @@ __all__ = [
     "InventoryEvent",
     "InventoryStatus",
     "InventoryStatusChanged",
+    "LocalTagRecord",
     "ReaderConfigurationAction",
     "ReaderConfigurationFeedback",
     "ReaderConfigurationOutcome",
     "ReaderConnectionSettings",
+    "SyncControl",
     "TagRead",
     "TagReceived",
     "TagLookupChanged",

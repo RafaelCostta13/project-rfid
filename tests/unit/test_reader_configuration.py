@@ -1,4 +1,4 @@
-import threading
+﻿import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -36,9 +36,10 @@ def application_settings() -> Settings:
         deduplication_window_seconds=2.0,
         connection_timeout_seconds=3.0,
         status_check_interval_seconds=5.0,
-        sharepoint_lookup_url="https://example.test/lookup",
-        sharepoint_lookup_timeout_seconds=10.0,
-        sharepoint_lookup_queue_size=100,
+        sharepoint_sync_url="https://example.test/sync",
+        sharepoint_sync_timeout_seconds=10.0,
+        tag_lookup_queue_size=100,
+        local_database_path=Path("local.sqlite3"),
         log_level="INFO",
     )
 
@@ -128,7 +129,7 @@ def test_dotenv_store_updates_only_reader_keys_and_preserves_crlf(tmp_path: Path
         b"# ambiente local\r\n"
         b"RFID_READER_HOST=192.168.0.100\r\n"
         b"export RFID_READER_PORT = 5000\r\n"
-        b"SHAREPOINT_LOOKUP_URL=https://secret.example.test/?sig=secret\r\n"
+        b"SHAREPOINT_SYNC_URL=https://secret.example.test/?sig=secret\r\n"
         b"CUSTOM_VALUE=preservar\r\n"
     )
     path.write_bytes(original)
@@ -140,7 +141,7 @@ def test_dotenv_store_updates_only_reader_keys_and_preserves_crlf(tmp_path: Path
     assert b'RFID_READER_NAME="Reader Doca 01"\r\n' in content
     assert b'RFID_READER_HOST="192.168.0.214"\r\n' in content
     assert b"export RFID_READER_PORT =5084\r\n" in content
-    assert b"SHAREPOINT_LOOKUP_URL=https://secret.example.test/?sig=secret\r\n" in content
+    assert b"SHAREPOINT_SYNC_URL=https://secret.example.test/?sig=secret\r\n" in content
     assert b"CUSTOM_VALUE=preservar\r\n" in content
     assert content.startswith(b"# ambiente local\r\n")
 
@@ -363,3 +364,4 @@ def test_prevents_simultaneous_connection_tests() -> None:
     finally:
         release.set()
         service.close()
+
