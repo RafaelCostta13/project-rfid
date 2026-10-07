@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
@@ -98,4 +98,3 @@ def test_write_failure_preserves_file_and_memory(
 def test_validates_health_check_configuration(variable: str, value: str) -> None:
     with pytest.raises(ConfigurationError, match=variable):
         load_config({"SHAREPOINT_SYNC_URL": "https://example.test", variable: value})
-

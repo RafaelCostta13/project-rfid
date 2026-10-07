@@ -1,4 +1,4 @@
-﻿import socket
+import socket
 from pathlib import Path
 
 import pytest
@@ -40,12 +40,12 @@ def test_check_config_returns_success_and_prints_safe_summary(
 def test_check_config_returns_error_for_invalid_configuration(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = main(["check-config"], {})
+    exit_code = main(["check-config"], {"RFID_READER_HOST": ""})
 
     assert exit_code != 0
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "SHAREPOINT_SYNC_URL" in captured.err
+    assert "RFID_READER_HOST" in captured.err
 
 
 def test_check_config_does_not_access_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -86,4 +86,3 @@ def test_show_reports_application_start_error(
 
     assert main(["show"], valid_environment(), tmp_path / ".env") == 1
     assert "interface indisponível" in capsys.readouterr().err
-

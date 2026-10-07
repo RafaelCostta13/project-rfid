@@ -77,6 +77,10 @@ class MainWindow:
         *,
         get_station_dock: Callable[[], str] = lambda: "",
         on_save_station_dock: Callable[[str], StationConfigurationFeedback] | None = None,
+        get_backend_url: Callable[[], str] = lambda: "",
+        on_test_backend: Callable[[str], object] = lambda value: None,
+        on_save_backend: Callable[[str], bool] = lambda value: False,
+        backend_updates: queue.SimpleQueue[str] | None = None,
     ) -> None:
         self._updates = updates
         self._inventory_updates = inventory_updates
@@ -85,6 +89,7 @@ class MainWindow:
         self._waveshare_configuration_updates = waveshare_configuration_updates
         self._automatic_mode_updates = automatic_mode_updates
         self._diagnostic_updates = diagnostic_updates
+        self._backend_updates = backend_updates or queue.SimpleQueue()
         self._on_disconnect_diagnostic = on_disconnect_diagnostic
         self._is_automatic = is_automatic
         self._lookup_session_id = 0
@@ -93,6 +98,7 @@ class MainWindow:
         self._get_reader_settings = get_reader_settings
         self._get_waveshare_settings = get_waveshare_settings
         self._get_station_dock = get_station_dock
+        self._get_backend_url = get_backend_url
         self._closing = False
         self._navigation = NavigationState()
         self._root = tk.Tk()
@@ -129,6 +135,9 @@ class MainWindow:
             self._open_waveshare_diagnostic,
             station_dock=get_station_dock(),
             on_save_station_dock=on_save_station_dock,
+            backend_url=get_backend_url(),
+            on_test_backend=on_test_backend,
+            on_save_backend=on_save_backend,
         )
         self._diagnostic_page = WaveshareDiagnosticPage(
             self._content,
@@ -166,6 +175,9 @@ class MainWindow:
             self._settings_page.set_settings(self._get_reader_settings())
             self._settings_page.set_waveshare_settings(self._get_waveshare_settings())
             self._settings_page.set_station_dock(self._get_station_dock())
+            set_backend_url = getattr(self._settings_page, "set_backend_url", None)
+            if set_backend_url is not None:
+                set_backend_url(self._get_backend_url())
         self._content.show(page)
 
     def _open_waveshare_diagnostic(self) -> None:
@@ -194,6 +206,7 @@ class MainWindow:
         self._drain_lookup_updates()
         self._drain_configuration_updates()
         self._drain_waveshare_configuration_updates()
+        self._drain_backend_updates()
         self._drain_automatic_mode_updates()
         self._drain_diagnostic_updates()
         if not self._closing:
@@ -246,6 +259,14 @@ class MainWindow:
             except queue.Empty:
                 return
             self._settings_page.apply_waveshare_feedback(event)
+
+    def _drain_backend_updates(self) -> None:
+        while True:
+            try:
+                message = self._backend_updates.get_nowait()
+            except queue.Empty:
+                return
+            self._settings_page.show_backend_feedback(message)
 
     def _drain_automatic_mode_updates(self) -> None:
         while True:

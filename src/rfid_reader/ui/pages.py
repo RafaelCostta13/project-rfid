@@ -42,6 +42,7 @@ WAVESHARE_SETTINGS_FIELDS = (
     "Device ID",
 )
 TEST_CONNECTION_BUTTON_TEXT = "Testar conexão"
+BACKEND_TEST_CONNECTION_BUTTON_TEXT = "Testar conexão"
 SAVE_CONFIGURATION_BUTTON_TEXT = "Salvar configurações"
 WAVESHARE_DIAGNOSTIC_BUTTON_TEXT = "Testar Waveshare"
 TAG_TABLE_HEADINGS = (
@@ -59,7 +60,7 @@ def tag_lookup_values(result: TagLookupResult) -> tuple[str, ...]:
     """Converte o modelo normalizado para a ordem visual da tabela."""
 
     return (
-        result.status.value,
+        result.record_status or result.status.value,
         result.customer,
         result.invoice_number,
         result.volume,
@@ -490,6 +491,9 @@ class RFIDSettingsPage(tk.Frame):
         *,
         station_dock: str = "",
         on_save_station_dock: Callable[[str], StationConfigurationFeedback] | None = None,
+        backend_url: str = "",
+        on_test_backend: Callable[[str], object] | None = None,
+        on_save_backend: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(parent, background=APP_BACKGROUND, padx=32, pady=28)
         self._reader_name_var = tk.StringVar(value=settings.name)
@@ -505,6 +509,10 @@ class RFIDSettingsPage(tk.Frame):
         self._on_test_waveshare = on_test_waveshare
         self._on_save_waveshare = on_save_waveshare
         self._on_open_waveshare_diagnostic = on_open_waveshare_diagnostic
+        self._backend_url_var = tk.StringVar(value=backend_url)
+        self._on_test_backend = on_test_backend
+        self._on_save_backend = on_save_backend
+        self._backend_feedback_label: tk.Label
         self._waveshare_panel: WaveshareSettingsPanel
         self._build()
 
@@ -676,6 +684,67 @@ class RFIDSettingsPage(tk.Frame):
         )
         self._waveshare_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
+        backend = tk.Frame(cards, background=HEADER_BACKGROUND, padx=24, pady=22)
+        backend.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        tk.Label(
+            backend,
+            text="Backend RFID",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_PRIMARY,
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            backend,
+            text="URL do Backend",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_MUTED,
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(14, 6))
+        tk.Entry(
+            backend,
+            textvariable=self._backend_url_var,
+            background="#FFFFFF",
+            foreground=TEXT_PRIMARY,
+            relief="solid",
+            borderwidth=1,
+            font=("Segoe UI", 11),
+        ).pack(fill="x")
+        actions = tk.Frame(backend, background=HEADER_BACKGROUND)
+        actions.pack(anchor="w", pady=(16, 0))
+        tk.Button(
+            actions,
+            text=BACKEND_TEST_CONNECTION_BUTTON_TEXT,
+            command=self._request_backend_test,
+            background="#1D4ED8",
+            foreground="#FFFFFF",
+            borderwidth=0,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+            padx=16,
+            pady=9,
+        ).pack(side="left", padx=(0, 10))
+        tk.Button(
+            actions,
+            text=SAVE_CONFIGURATION_BUTTON_TEXT,
+            command=self._request_backend_save,
+            background="#16803C",
+            foreground="#FFFFFF",
+            borderwidth=0,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+            padx=16,
+            pady=9,
+        ).pack(side="left")
+        self._backend_feedback_label = tk.Label(
+            backend,
+            text="",
+            background=HEADER_BACKGROUND,
+            foreground=TEXT_MUTED,
+            font=("Segoe UI", 10, "bold"),
+            justify="left",
+        )
+        self._backend_feedback_label.pack(anchor="w", pady=(14, 0))
+
     def _values(self) -> tuple[str, str, str]:
         return (
             self._reader_name_var.get(),
@@ -743,6 +812,32 @@ class RFIDSettingsPage(tk.Frame):
         """Atualiza a seção Waveshare com os valores atuais em memória."""
 
         self._waveshare_panel.set_settings(settings)
+
+    def set_backend_url(self, value: str) -> None:
+        self._backend_url_var.set(value)
+
+    def _request_backend_test(self) -> None:
+        if self._on_test_backend is not None:
+            self._on_test_backend(self._backend_url_var.get())
+
+    def _request_backend_save(self) -> None:
+        if self._on_save_backend is None:
+            return
+        success = self._on_save_backend(self._backend_url_var.get())
+        self._show_backend_feedback(
+            "URL do Backend salva." if success else "Não foi possível salvar a URL do Backend."
+        )
+
+    def _show_backend_feedback(self, message: str) -> None:
+        self._backend_feedback_label.configure(
+            text=message,
+            foreground="#16803C" if "sucesso" in message or "salva" in message else TEXT_MUTED,
+        )
+
+    def show_backend_feedback(self, message: str) -> None:
+        """Atualiza o feedback na thread gráfica após um teste assíncrono."""
+
+        self._show_backend_feedback(message)
 
     def apply_waveshare_feedback(self, event: WaveshareConfigurationFeedback) -> None:
         """Encaminha um evento à seção Waveshare na thread gráfica."""

@@ -10,6 +10,7 @@ class ConnectionKind(StrEnum):
     INTERNET = "internet"
     WAVESHARE = "waveshare"
     DATABASE = "database"
+    SYSTEM = "system"
     SYNC = "sync"
 
 

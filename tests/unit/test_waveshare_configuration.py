@@ -1,4 +1,4 @@
-﻿import threading
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -237,4 +237,3 @@ def test_prevents_simultaneous_connection_tests() -> None:
     finally:
         release.set()
         service.close()
-

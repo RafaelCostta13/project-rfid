@@ -13,6 +13,7 @@ from rfid_reader.domain import (
     TagLookupStatus,
     TagRead,
 )
+from rfid_reader.integrations.backend_client import BackendClientError, RfidRecordData
 from rfid_reader.services.local_database import LocalTagRepository
 from rfid_reader.services.tag_lookup import FRIENDLY_ERROR_MESSAGE, TagLookupService
 
@@ -79,6 +80,41 @@ def repository(tmp_path: Path) -> LocalTagRepository:
     return repo
 
 
+class LocalCompatibilityClient:
+    """Adapta a fixture SQLite antiga ao contrato do cliente Backend nos testes."""
+
+    def __init__(self, repository: LocalTagRepository, dock: str) -> None:
+        self._repository = repository
+        self._dock = dock
+
+    def get_rfid_record(self, epc: str) -> RfidRecordData | None:
+        try:
+            result = self._repository.find_by_epc(epc, self._dock)
+        except Exception as error:
+            raise BackendClientError("falha simulada no Backend") from error
+        if result is None:
+            return None
+        return RfidRecordData(
+            datahora="",
+            volume=result.volume,
+            pedido=result.order_number,
+            notafiscal=result.invoice_number,
+            destinatario=result.customer,
+            endereco="",
+            numero="",
+            cidade="",
+            uf="",
+            doca=result.dock,
+            epc=result.epc,
+            tag=None,
+            fornecedor="",
+            status="pendente",
+            first_read_at=None,
+            last_read_at=None,
+            read_count=0,
+        )
+
+
 def completed(events: list[TagLookupEvent], epc: str) -> list[TagLookupChanged]:
     return [
         event
@@ -91,7 +127,9 @@ def completed(events: list[TagLookupEvent], epc: str) -> list[TagLookupChanged]:
 
 def test_deduplicates_same_reader_antenna_and_epc_in_one_session(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
     try:
         service.start_session()
 
@@ -106,7 +144,9 @@ def test_deduplicates_same_reader_antenna_and_epc_in_one_session(tmp_path: Path)
 
 def test_same_epc_on_another_antenna_has_an_independent_local_lookup(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
     try:
         service.start_session()
 
@@ -119,7 +159,9 @@ def test_same_epc_on_another_antenna_has_an_independent_local_lookup(tmp_path: P
 
 def test_new_session_allows_a_new_lookup_for_same_tag(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
     try:
         first_session = service.start_session()
         service.submit(tag(EPC_01))
@@ -137,7 +179,9 @@ def test_new_session_allows_a_new_lookup_for_same_tag(tmp_path: Path) -> None:
 
 def test_processes_multiple_epcs_with_individual_results(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
     try:
         service.start_session()
         for epc in (EPC_01, EPC_02):
@@ -163,7 +207,9 @@ def test_invalid_epc_is_ignored_without_lookup_or_visual_event(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
     try:
         service.start_session()
 
@@ -181,7 +227,9 @@ def test_logs_every_received_tag_before_local_lookup(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
     received = TagRead(
         epc=EPC_MISSING,
         reader_id="reader-01",
@@ -206,7 +254,9 @@ def test_logs_every_received_tag_before_local_lookup(
 
 def test_stop_prevents_new_lookups(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
     try:
         service.start_session()
         service.stop_accepting()
@@ -221,7 +271,9 @@ def test_stop_prevents_new_lookups(tmp_path: Path) -> None:
 
 def test_epc_missing_other_dock_or_inactive_is_ignored_without_error(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
     try:
         service.start_session()
         assert service.submit(tag(EPC_MISSING))
@@ -239,7 +291,7 @@ def test_epc_missing_other_dock_or_inactive_is_ignored_without_error(tmp_path: P
 def test_local_database_failure_marks_only_that_epc_as_error(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
     repo = LocalTagRepository(tmp_path / "missing-schema.sqlite3")
-    service = TagLookupService(repo, lambda: "D01", 10, events.append)
+    service = TagLookupService(lambda: LocalCompatibilityClient(repo, "D01"), 10, events.append)
     try:
         service.start_session()
         service.submit(tag(EPC_ERROR))

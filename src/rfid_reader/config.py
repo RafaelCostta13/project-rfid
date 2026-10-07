@@ -32,6 +32,7 @@ DEFAULT_WAVESHARE_STOP_BITS = 1
 DEFAULT_WAVESHARE_DEVICE_ID = 1
 DEFAULT_SYNC_CHECK_INTERVAL_SECONDS = 60.0
 DEFAULT_LOCAL_DATABASE_FILENAME = "rfid-reader.sqlite3"
+DEFAULT_BACKEND_BASE_URL = ""
 STATION_DOCK_SUGGESTIONS = ("D01", "D02", "D03", "D04", "D05")
 KNOWN_LOG_LEVELS = frozenset(logging.getLevelNamesMapping())
 HOSTNAME_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
@@ -93,6 +94,7 @@ class Settings:
     waveshare_device_id: int = DEFAULT_WAVESHARE_DEVICE_ID
     station_dock: str = ""
     sync_check_interval_seconds: float = DEFAULT_SYNC_CHECK_INTERVAL_SECONDS
+    backend_base_url: str = DEFAULT_BACKEND_BASE_URL
 
     @property
     def reader_connection(self) -> ReaderConnectionSettings:
@@ -381,6 +383,13 @@ def _required_https_url(environment: Mapping[str, str], variable: str) -> str:
     return value
 
 
+def _optional_https_url(environment: Mapping[str, str], variable: str) -> str:
+    value = environment.get(variable, "").strip()
+    if not value:
+        return ""
+    return _required_https_url(environment, variable)
+
+
 def _positive_integer(environment: Mapping[str, str], variable: str, default: int) -> int:
     value = _integer(environment, variable, default)
     if value <= 0:
@@ -463,7 +472,7 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
             "RFID_STATUS_CHECK_INTERVAL_SECONDS",
             DEFAULT_STATUS_CHECK_INTERVAL_SECONDS,
         ),
-        sharepoint_sync_url=_required_https_url(source, "SHAREPOINT_SYNC_URL"),
+        sharepoint_sync_url=_optional_https_url(source, "SHAREPOINT_SYNC_URL"),
         sharepoint_sync_timeout_seconds=_positive_float(
             source,
             "SHAREPOINT_SYNC_TIMEOUT_SECONDS",
@@ -484,4 +493,5 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
         waveshare_device_id=waveshare_connection.device_id,
         station_dock=validate_station_dock(source.get("RFID_STATION_DOCK", "")),
         sync_check_interval_seconds=_sync_check_interval(source),
+        backend_base_url=source.get("RFID_BACKEND_BASE_URL", "").strip(),
     )

@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from rfid_reader.config import (
     ConfigurationError,
@@ -272,14 +272,21 @@ def test_rejects_invalid_connection_timing(variable: str, value: str) -> None:
 
 @pytest.mark.parametrize(
     "url",
-    ["", " ", "not-a-url", "http://example.test/sync"],
+    ["not-a-url", "http://example.test/sync"],
 )
-def test_rejects_missing_or_invalid_sharepoint_url(url: str) -> None:
+def test_rejects_invalid_sharepoint_url_when_legacy_setting_is_used(url: str) -> None:
     environment = valid_environment()
     environment["SHAREPOINT_SYNC_URL"] = url
 
     with pytest.raises(ConfigurationError, match="SHAREPOINT_SYNC_URL"):
         load_config(environment)
+
+
+def test_allows_missing_legacy_sharepoint_url_after_remote_cutover() -> None:
+    environment = valid_environment()
+    environment.pop("SHAREPOINT_SYNC_URL")
+
+    assert load_config(environment).sharepoint_sync_url == ""
 
 
 @pytest.mark.parametrize(
@@ -299,4 +306,3 @@ def test_rejects_invalid_sharepoint_limits(variable: str, value: str) -> None:
 
     with pytest.raises(ConfigurationError, match=variable):
         load_config(environment)
-

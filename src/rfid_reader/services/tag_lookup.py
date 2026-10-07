@@ -7,6 +7,7 @@ import queue
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from rfid_reader.domain import (
     TagLookupChanged,
@@ -17,7 +18,10 @@ from rfid_reader.domain import (
     TagLookupStatus,
     TagRead,
 )
-from rfid_reader.services.local_database import LocalDatabaseError, LocalTagRepository
+from rfid_reader.integrations.backend_client import (
+    BackendClientError,
+    RfidRecordData,
+)
 from rfid_reader.services.tag_validation import is_valid_epc
 
 LOGGER = logging.getLogger(__name__)
@@ -31,18 +35,23 @@ class _LookupTask:
     key: TagLookupKey
 
 
+class BackendLookupClient(Protocol):
+    def get_rfid_record(self, epc: str) -> RfidRecordData | None: ...
+
+
+BackendClientFactory = Callable[[], BackendLookupClient]
+
+
 class TagLookupService:
     """Deduplica EPCs por sessão e os processa em um único worker."""
 
     def __init__(
         self,
-        repository: LocalTagRepository,
-        dock_getter: Callable[[], str],
+        client_factory: BackendClientFactory,
         queue_size: int,
         listener: TagLookupListener,
     ) -> None:
-        self._repository = repository
-        self._dock_getter = dock_getter
+        self._client_factory = client_factory
         self._listener = listener
         self._queue: queue.Queue[_LookupTask] = queue.Queue(maxsize=queue_size)
         self._lock = threading.Lock()
@@ -88,7 +97,8 @@ class TagLookupService:
             tag.rssi,
             tag.read_at.isoformat(),
         )
-        if not is_valid_epc(tag.epc):
+        normalized_epc = tag.epc.strip().upper()
+        if not is_valid_epc(normalized_epc):
             LOGGER.warning(
                 "tag_lookup_invalid_epc_ignored reader_id=%s antenna=%s epc=%s",
                 tag.reader_id,
@@ -96,8 +106,7 @@ class TagLookupService:
                 tag.epc,
             )
             return False
-
-        key = TagLookupKey(tag.reader_id, tag.antenna_id, tag.epc)
+        key = TagLookupKey(tag.reader_id, tag.antenna_id, normalized_epc)
         with self._lock:
             if self._closed or not self._accepting or key in self._seen:
                 return False
@@ -142,20 +151,15 @@ class TagLookupService:
             task.key.antenna_id,
             task.key.epc,
         )
-        dock = self._dock_getter()
         try:
-            result = self._repository.find_by_epc(task.key.epc, dock)
-        except LocalDatabaseError:
-            LOGGER.exception("tag_lookup_local_database_error epc=%s dock=%s", task.key.epc, dock)
-            self._emit_error_if_current(task)
-            return
-        except Exception:
-            LOGGER.exception("tag_lookup_unexpected_error epc=%s", task.key.epc)
+            record = self._client_factory().get_rfid_record(task.key.epc)
+        except BackendClientError:
+            LOGGER.exception("tag_lookup_backend_error epc=%s", task.key.epc)
             self._emit_error_if_current(task)
             return
 
-        if result is None:
-            LOGGER.debug("tag_lookup_not_found epc=%s dock=%s", task.key.epc, dock)
+        if record is None:
+            LOGGER.info("tag_lookup_not_found epc=%s", task.key.epc)
             return
         if not self._is_current_session(task.session_id):
             LOGGER.debug("tag_lookup_stale_result_ignored epc=%s", task.key.epc)
@@ -163,14 +167,28 @@ class TagLookupService:
         LOGGER.info(
             "tag_lookup_finished epc=%s status=%s",
             task.key.epc,
-            result.status.value,
+            record.status,
         )
         self._emit(
             TagLookupChanged(
                 task.session_id,
                 task.key,
-                result,
+                self._result_from_record(record),
             )
+        )
+
+    @staticmethod
+    def _result_from_record(record: RfidRecordData) -> TagLookupResult:
+        return TagLookupResult(
+            epc=record.epc,
+            status=TagLookupStatus.FOUND,
+            message="Etiqueta encontrada no Backend RFID.",
+            customer=record.destinatario,
+            invoice_number=record.notafiscal,
+            order_number=record.pedido,
+            volume=record.volume,
+            dock=record.doca,
+            record_status=record.status,
         )
 
     def _emit_error_if_current(self, task: _LookupTask) -> None:

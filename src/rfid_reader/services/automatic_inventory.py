@@ -16,7 +16,7 @@ OPERATIONAL_CONNECTIONS = (
     ConnectionKind.INTERNET,
     ConnectionKind.RFID,
     ConnectionKind.WAVESHARE,
-    ConnectionKind.DATABASE,
+    ConnectionKind.SYSTEM,
 )
 
 
@@ -59,6 +59,7 @@ class AutomaticInventoryController:
         self._mode_listener = mode_listener
         self._lock = threading.RLock()
         self._statuses = {kind: ConnectionStatus.CHECKING for kind in ConnectionKind}
+        self._backend_observed = False
         self._enabled = False
         self._previous: tuple[bool, bool] | None = None
         self._armed = False
@@ -82,6 +83,8 @@ class AutomaticInventoryController:
 
         mode_changed = False
         with self._lock:
+            if kind is ConnectionKind.SYSTEM:
+                self._backend_observed = True
             previous = self._statuses[kind]
             self._statuses[kind] = status
             if previous is status:
@@ -102,9 +105,10 @@ class AutomaticInventoryController:
             self._notify_mode(False)
 
     def _is_ready(self) -> bool:
-        return all(
-            self._statuses[kind] is ConnectionStatus.CONNECTED for kind in OPERATIONAL_CONNECTIONS
-        )
+        required: tuple[ConnectionKind, ...] = OPERATIONAL_CONNECTIONS
+        if not self._backend_observed:
+            required = tuple(kind for kind in required if kind is not ConnectionKind.SYSTEM)
+        return all(self._statuses[kind] is ConnectionStatus.CONNECTED for kind in required)
 
     def enable(self) -> bool:
         with self._lock:

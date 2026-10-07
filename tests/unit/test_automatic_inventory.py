@@ -187,7 +187,7 @@ def test_timer_stops_rfid_while_relay_confirmation_is_blocked() -> None:
 
 
 @pytest.mark.parametrize(
-    "kind", [ConnectionKind.INTERNET, ConnectionKind.RFID, ConnectionKind.DATABASE]
+    "kind", [ConnectionKind.INTERNET, ConnectionKind.RFID, ConnectionKind.SYSTEM]
 )
 def test_unavailable_dependency_stops_cycle_and_selects_red(kind: ConnectionKind) -> None:
     rig = Rig()
@@ -253,10 +253,10 @@ def test_ready_indicator_is_independent_from_automatic_mode() -> None:
 
 
 @pytest.mark.parametrize("status", [ConnectionStatus.ERROR, ConnectionStatus.CHECKING])
-def test_database_not_ready_blocks_enable_and_sensor_cycles(status: ConnectionStatus) -> None:
+def test_system_not_ready_blocks_enable_and_sensor_cycles(status: ConnectionStatus) -> None:
     rig = Rig()
     rig.controller.disable()
-    rig.controller.update_connection_status(ConnectionKind.DATABASE, status)
+    rig.controller.update_connection_status(ConnectionKind.SYSTEM, status)
 
     assert not rig.controller.ready
     assert not rig.controller.enable()
@@ -265,7 +265,7 @@ def test_database_not_ready_blocks_enable_and_sensor_cycles(status: ConnectionSt
 
     assert rig.inventory.starts == 0
     assert rig.relays == {1: False, 2: False, 3: True}
-    rig.controller.update_connection_status(ConnectionKind.DATABASE, ConnectionStatus.CONNECTED)
+    rig.controller.update_connection_status(ConnectionKind.SYSTEM, ConnectionStatus.CONNECTED)
     rig.update(True, True)
     assert rig.controller.ready
     assert rig.relays == {1: True, 2: False, 3: False}

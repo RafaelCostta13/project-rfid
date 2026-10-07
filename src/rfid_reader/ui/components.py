@@ -25,9 +25,14 @@ CONNECTION_NAMES = {
     ConnectionKind.RFID: "RFID",
     ConnectionKind.INTERNET: "Internet",
     ConnectionKind.WAVESHARE: "Comandos",
-    ConnectionKind.DATABASE: "Base de dados",
-    ConnectionKind.SYNC: "Sincronização",
+    ConnectionKind.SYSTEM: "Sistema",
 }
+VISIBLE_CONNECTION_KINDS = (
+    ConnectionKind.RFID,
+    ConnectionKind.INTERNET,
+    ConnectionKind.WAVESHARE,
+    ConnectionKind.SYSTEM,
+)
 PAGE_NAMES = {
     PageId.SYSTEM_STATUS: "Start",
     PageId.RFID_SETTINGS: "Configurações",
@@ -68,7 +73,7 @@ class ConnectionBar(tk.Frame):
         )
         self.grid_propagate(False)
         self._labels: dict[ConnectionKind, tk.Label] = {}
-        for kind in ConnectionKind:
+        for kind in VISIBLE_CONNECTION_KINDS:
             label = tk.Label(
                 self,
                 text=self._status_text(kind, ConnectionStatus.CHECKING),

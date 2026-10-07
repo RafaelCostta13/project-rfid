@@ -1,5 +1,6 @@
 """Serviços de coordenação da aplicação."""
 
+from rfid_reader.services.backend import BackendConfigurationService, BackendHealthChecker
 from rfid_reader.services.connection_monitor import ConnectionMonitor
 from rfid_reader.services.local_database import LocalTagRepository
 from rfid_reader.services.local_database_connection import (
@@ -32,4 +33,6 @@ __all__ = [
     "TagSyncService",
     "DotEnvWaveshareConfigurationStore",
     "WaveshareConfigurationService",
+    "BackendConfigurationService",
+    "BackendHealthChecker",
 ]

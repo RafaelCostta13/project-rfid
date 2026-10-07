@@ -35,6 +35,7 @@ class TagLookupResult:
     order_number: str = ""
     volume: str = ""
     dock: str = ""
+    record_status: str = ""
 
 
 @dataclass(slots=True)

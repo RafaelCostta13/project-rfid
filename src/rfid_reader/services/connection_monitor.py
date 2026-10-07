@@ -14,7 +14,7 @@ StatusListener = Callable[[ConnectionKind, ConnectionStatus], None]
 
 
 class ConnectionChecker(Protocol):
-    def check(self) -> ConnectionStatus: ...
+    def check(self) -> ConnectionStatus | Mapping[ConnectionKind, ConnectionStatus]: ...
 
     def close(self) -> None: ...
 
@@ -27,13 +27,16 @@ class ConnectionMonitor:
         checkers: Mapping[ConnectionKind, ConnectionChecker],
         interval_seconds: float,
         listener: StatusListener,
+        *,
+        additional_kinds: tuple[ConnectionKind, ...] = (),
     ) -> None:
         self._checkers = dict(checkers)
         self._interval_seconds = interval_seconds
         self._listener = listener
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
-        self._states = {kind: ConnectionStatus.CHECKING for kind in self._checkers}
+        kinds = (*self._checkers, *additional_kinds)
+        self._states = {kind: ConnectionStatus.CHECKING for kind in kinds}
         self._threads: list[threading.Thread] = []
         self._started = False
 
@@ -60,13 +63,17 @@ class ConnectionMonitor:
         checker = self._checkers[kind]
         while not self._stop_event.is_set():
             try:
-                status = checker.check()
+                result = checker.check()
             except Exception:
                 LOGGER.exception("connection_check_failed connection=%s", kind.value)
-                status = ConnectionStatus.ERROR
+                result = ConnectionStatus.ERROR
             if self._stop_event.is_set():
                 return
-            self._set_status(kind, status)
+            if isinstance(result, Mapping):
+                for result_kind, status in result.items():
+                    self._set_status(result_kind, status)
+            else:
+                self._set_status(kind, result)
             if self._stop_event.wait(self._interval_seconds):
                 return
 

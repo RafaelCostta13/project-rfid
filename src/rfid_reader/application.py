@@ -21,32 +21,33 @@ from rfid_reader.domain import (
     TagReceived,
     WaveshareConfigurationFeedback,
 )
-from rfid_reader.integrations import PowerAutomateSyncClient, PymodbusWaveshareConnectionTester
+from rfid_reader.integrations import (
+    BackendRFIDClient,
+    PymodbusWaveshareConnectionTester,
+)
 from rfid_reader.integrations.waveshare_modbus import WaveshareSerialGate
 from rfid_reader.readers import ZebraFX9600Reader
 from rfid_reader.services import (
     ConnectionMonitor,
     DotEnvReaderConfigurationStore,
     DotEnvWaveshareConfigurationStore,
-    LocalDatabaseConnectionChecker,
-    LocalTagRepository,
     ManualInventoryService,
     ReaderConfigurationService,
     ReaderConnectionChecker,
-    SyncConnectionChecker,
     TagLookupService,
-    TagSyncService,
     WaveshareConfigurationService,
 )
 from rfid_reader.services.automatic_inventory import AutomaticInventoryController
+from rfid_reader.services.backend import BackendConfigurationService, BackendHealthChecker
 from rfid_reader.services.internet import InternetConnectionChecker
 from rfid_reader.services.station_configuration import (
     StationConfigurationFeedback,
     StationConfigurationService,
 )
-from rfid_reader.services.tag_sync import TagSyncLocalError, TagSyncRemoteError
 from rfid_reader.services.waveshare_connection import WaveshareConnectionChecker
 from rfid_reader.services.waveshare_diagnostic import DiagnosticEvent, WaveshareDiagnosticService
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ApplicationError(RuntimeError):
@@ -81,6 +82,7 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
         queue.SimpleQueue()
     )
     diagnostic_updates: queue.SimpleQueue[DiagnosticEvent] = queue.SimpleQueue()
+    backend_updates: queue.SimpleQueue[str] = queue.SimpleQueue()
     automatic_mode_updates: queue.SimpleQueue[bool] = queue.SimpleQueue()
     reader = ZebraFX9600Reader(
         settings.reader_host,
@@ -89,19 +91,16 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
         settings.antennas[0],
         settings.connection_timeout_seconds,
     )
-    local_tags = LocalTagRepository(settings.local_database_path)
-    local_tags.initialize()
+    backend_configuration = BackendConfigurationService(
+        settings, DotEnvReaderConfigurationStore(configuration_path)
+    )
     station_configuration = StationConfigurationService(
         settings, DotEnvReaderConfigurationStore(configuration_path)
     )
-    sync_client = PowerAutomateSyncClient(
-        settings.sharepoint_sync_url,
-        settings.sharepoint_sync_timeout_seconds,
-    )
-    tag_sync = TagSyncService(sync_client, local_tags, station_configuration.current)
     lookup = TagLookupService(
-        local_tags,
-        station_configuration.current,
+        lambda: BackendRFIDClient(
+            backend_configuration.current(), settings.connection_timeout_seconds
+        ),
         settings.tag_lookup_queue_size,
         lookup_updates.put,
     )
@@ -122,7 +121,6 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
     inventory = ManualInventoryService(reader, on_inventory_event)
     automatic = AutomaticInventoryController(inventory, mode_listener=automatic_mode_updates.put)
     inventory_commands = ThreadPoolExecutor(max_workers=1, thread_name_prefix="inventory-command")
-    database_sync_commands = ThreadPoolExecutor(max_workers=1, thread_name_prefix="database-sync")
 
     def temporary_reader(connection: ReaderConnectionSettings) -> ZebraFX9600Reader:
         return ZebraFX9600Reader(
@@ -167,14 +165,10 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
             ConnectionKind.RFID: ReaderConnectionChecker(reader),
             ConnectionKind.INTERNET: InternetConnectionChecker(settings.connection_timeout_seconds),
             ConnectionKind.WAVESHARE: WaveshareConnectionChecker(diagnostic, waveshare_tester),
-            ConnectionKind.DATABASE: LocalDatabaseConnectionChecker(
-                local_tags,
-                station_configuration.current,
-            ),
-            ConnectionKind.SYNC: SyncConnectionChecker(
-                tag_sync,
-                lambda: monitor.statuses()[ConnectionKind.INTERNET],
-                settings.sync_check_interval_seconds,
+            ConnectionKind.SYSTEM: BackendHealthChecker(
+                lambda: BackendRFIDClient(
+                    backend_configuration.current(), settings.connection_timeout_seconds
+                )
             ),
         },
         settings.status_check_interval_seconds,
@@ -188,42 +182,14 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
         automatic.disable()
         monitor.stop()
         diagnostic.close()
-        database_sync_commands.shutdown(wait=True, cancel_futures=True)
         inventory_commands.shutdown(wait=True, cancel_futures=True)
         reader_configuration.close()
         waveshare_configuration.close()
         inventory.close()
         lookup.close()
 
-    def refresh_database_status() -> None:
-        on_connection_status(
-            ConnectionKind.DATABASE,
-            (
-                ConnectionStatus.CONNECTED
-                if local_tags.is_operational(station_configuration.current())
-                else ConnectionStatus.ERROR
-            ),
-        )
-
-    def sync_current_dock() -> None:
-        try:
-            tag_sync.sync_current_dock()
-        except TagSyncRemoteError:
-            on_connection_status(ConnectionKind.SYNC, ConnectionStatus.ERROR)
-        except TagSyncLocalError:
-            on_connection_status(ConnectionKind.SYNC, ConnectionStatus.CONNECTED)
-        except Exception:
-            on_connection_status(ConnectionKind.SYNC, ConnectionStatus.ERROR)
-        else:
-            on_connection_status(ConnectionKind.SYNC, ConnectionStatus.CONNECTED)
-        refresh_database_status()
-
     def save_station_dock(dock: str) -> StationConfigurationFeedback:
-        feedback = station_configuration.save(dock)
-        if feedback.success:
-            refresh_database_status()
-            database_sync_commands.submit(sync_current_dock)
-        return feedback
+        return station_configuration.save(dock)
 
     def start_automatic() -> None:
         inventory_commands.submit(automatic.enable)
@@ -256,10 +222,15 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
             lambda: automatic.enabled,
             get_station_dock=station_configuration.current,
             on_save_station_dock=lambda dock: save_station_dock(dock),
+            get_backend_url=backend_configuration.current,
+            on_test_backend=lambda value: backend_configuration.test_connection(
+                value, backend_updates.put
+            ),
+            on_save_backend=backend_configuration.save,
+            backend_updates=backend_updates,
         )
     except Exception as error:
         inventory_commands.shutdown(wait=True, cancel_futures=True)
-        database_sync_commands.shutdown(wait=True, cancel_futures=True)
         monitor.stop()
         reader_configuration.close()
         waveshare_configuration.close()
@@ -270,7 +241,6 @@ def run_application(settings: Settings, configuration_path: Path) -> None:
 
     diagnostic.connect_automatic()
     monitor.start()
-    database_sync_commands.submit(sync_current_dock)
     try:
         window.show()
     finally:
