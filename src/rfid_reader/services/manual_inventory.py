@@ -87,9 +87,11 @@ class ManualInventoryService:
             self._status = InventoryStatus.STOPPED
 
         try:
-            self._reader.stop_inventory()
+            if not self._reader.stop_inventory():
+                raise ReaderError("O reader não confirmou a parada do inventário.")
         except ReaderError:
             LOGGER.exception("manual_inventory_stop_failed")
+            self._reader.disconnect()
             with self._lock:
                 self._status = InventoryStatus.ERROR
             self._emit(InventoryStatusChanged(InventoryStatus.ERROR))

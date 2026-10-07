@@ -1,31 +1,26 @@
-import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
 from rfid_reader.domain import (
+    LocalTagRecord,
     TagLookupChanged,
     TagLookupEvent,
-    TagLookupResult,
     TagLookupSessionStarted,
     TagLookupStatus,
     TagRead,
 )
-from rfid_reader.integrations.sharepoint_client import (
-    TagLookupClientError,
-)
+from rfid_reader.services.local_database import LocalTagRepository
 from rfid_reader.services.tag_lookup import FRIENDLY_ERROR_MESSAGE, TagLookupService
 
 EPC_01 = "4550432D3031"
 EPC_02 = "4550432D3032"
-EPC_03 = "4550432D3033"
-EPC_IN_FLIGHT = "494E2D464C49474854"
-EPC_OLD = "4F4C44"
-EPC_NEW = "4E4557"
-EPC_QUEUED = "515545554544"
-EPC_OVERFLOW = "4F564552464C4F57"
+EPC_OTHER_DOCK = "4F54484552"
+EPC_INACTIVE = "494E414354495645"
+EPC_MISSING = "4D495353494E47"
 EPC_ERROR = "4552524F52"
 
 
@@ -44,44 +39,44 @@ def wait_until(predicate: Callable[[], bool], timeout: float = 1.0) -> None:
         if predicate():
             return
         time.sleep(0.005)
-    raise AssertionError("condição assíncrona não foi atendida")
+    raise AssertionError("condicao assincrona nao foi atendida")
 
 
-class RecordingClient:
-    def __init__(self) -> None:
-        self.epcs: list[str] = []
-
-    def lookup(self, epc: str) -> TagLookupResult:
-        self.epcs.append(epc)
-        return TagLookupResult(
-            epc,
-            TagLookupStatus.FOUND,
-            f"Encontrada {epc}",
-            customer=f"Cliente {epc}",
-            order_number=f"Pedido {epc}",
-        )
-
-
-class FailingClient:
-    def __init__(self, error: Exception) -> None:
-        self._error = error
-
-    def lookup(self, epc: str) -> TagLookupResult:
-        raise self._error
+def record(
+    sharepoint_id: int,
+    epc: str,
+    *,
+    dock: str = "D01",
+    status: str = "Ativo",
+) -> LocalTagRecord:
+    return LocalTagRecord(
+        sharepoint_id=sharepoint_id,
+        status=status,
+        customer=f"Cliente {epc}",
+        invoice_number=f"NF {epc}",
+        volume="1/1",
+        order_number=f"Pedido {epc}",
+        dock=dock,
+        epc=epc,
+        sharepoint_modified="2026-10-05T10:00:00Z",
+    )
 
 
-class BlockingClient:
-    def __init__(self) -> None:
-        self.started = threading.Event()
-        self.release = threading.Event()
-        self.epcs: list[str] = []
-
-    def lookup(self, epc: str) -> TagLookupResult:
-        self.epcs.append(epc)
-        self.started.set()
-        if not self.release.wait(1.0):
-            raise AssertionError("teste não liberou o cliente")
-        return TagLookupResult(epc, TagLookupStatus.FOUND, "Encontrada")
+def repository(tmp_path: Path) -> LocalTagRepository:
+    repo = LocalTagRepository(tmp_path / "local.sqlite3")
+    repo.initialize()
+    repo.apply_sync(
+        "D01",
+        (
+            record(1, EPC_01),
+            record(2, EPC_02),
+            record(3, EPC_OTHER_DOCK, dock="D05"),
+            record(4, EPC_INACTIVE, status="Inativo"),
+        ),
+        "2026-10-05T10:15:00Z",
+        full_sync=True,
+    )
+    return repo
 
 
 def completed(events: list[TagLookupEvent], epc: str) -> list[TagLookupChanged]:
@@ -94,10 +89,9 @@ def completed(events: list[TagLookupEvent], epc: str) -> list[TagLookupChanged]:
     ]
 
 
-def test_deduplicates_same_reader_antenna_and_epc_in_one_session() -> None:
-    client = RecordingClient()
+def test_deduplicates_same_reader_antenna_and_epc_in_one_session(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
+    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
     try:
         service.start_session()
 
@@ -105,39 +99,35 @@ def test_deduplicates_same_reader_antenna_and_epc_in_one_session() -> None:
         assert not service.submit(tag(EPC_01))
         wait_until(lambda: len(completed(events, EPC_01)) == 1)
 
-        assert client.epcs == [EPC_01]
+        assert completed(events, EPC_01)[0].result.customer == f"Cliente {EPC_01}"
     finally:
         service.close()
 
 
-def test_same_epc_on_another_antenna_has_an_independent_lookup() -> None:
-    client = RecordingClient()
+def test_same_epc_on_another_antenna_has_an_independent_local_lookup(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
+    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
     try:
         service.start_session()
 
         service.submit(tag(EPC_01, 1))
         service.submit(tag(EPC_01, 2))
         wait_until(lambda: len(completed(events, EPC_01)) == 2)
-
-        assert client.epcs == [EPC_01, EPC_01]
     finally:
         service.close()
 
 
-def test_new_session_allows_a_new_lookup_for_same_tag() -> None:
-    client = RecordingClient()
+def test_new_session_allows_a_new_lookup_for_same_tag(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
+    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
     try:
         first_session = service.start_session()
         service.submit(tag(EPC_01))
-        wait_until(lambda: len(client.epcs) == 1)
+        wait_until(lambda: len(completed(events, EPC_01)) == 1)
 
         second_session = service.start_session()
         service.submit(tag(EPC_01))
-        wait_until(lambda: len(client.epcs) == 2)
+        wait_until(lambda: len(completed(events, EPC_01)) == 2)
 
         assert second_session == first_session + 1
         assert sum(isinstance(event, TagLookupSessionStarted) for event in events) == 2
@@ -145,85 +135,78 @@ def test_new_session_allows_a_new_lookup_for_same_tag() -> None:
         service.close()
 
 
-def test_processes_multiple_epcs_with_individual_results() -> None:
-    client = RecordingClient()
+def test_processes_multiple_epcs_with_individual_results(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
+    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
     try:
         service.start_session()
-        for epc in (EPC_01, EPC_02, EPC_03):
+        for epc in (EPC_01, EPC_02):
             service.submit(tag(epc))
 
         wait_until(
-            lambda: (
-                sum(
-                    isinstance(event, TagLookupChanged)
-                    and event.result.status is TagLookupStatus.FOUND
-                    for event in events
-                )
-                == 3
-            )
+            lambda: len(completed(events, EPC_01)) == 1 and len(completed(events, EPC_02)) == 1
         )
 
-        assert client.epcs == [EPC_01, EPC_02, EPC_03]
         results = {
             event.result.epc: event.result
             for event in events
             if isinstance(event, TagLookupChanged) and event.result.status is TagLookupStatus.FOUND
         }
         assert results[EPC_01].customer == f"Cliente {EPC_01}"
-        assert results[EPC_02].customer == f"Cliente {EPC_02}"
-        assert results[EPC_03].order_number == f"Pedido {EPC_03}"
-    finally:
-        service.close()
-
-
-def test_multiple_hex_epcs_are_forwarded_without_conversion() -> None:
-    client = RecordingClient()
-    events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
-    try:
-        service.start_session()
-        service.submit(tag("5441472D3031"))
-        service.submit(tag("5441472D3032"))
-
-        wait_until(
-            lambda: (
-                len(completed(events, "5441472D3031")) == 1
-                and len(completed(events, "5441472D3032")) == 1
-            )
-        )
-
-        assert completed(events, "5441472D3031")[0].result.epc == "5441472D3031"
-        assert completed(events, "5441472D3032")[0].result.epc == "5441472D3032"
-        assert client.epcs == ["5441472D3031", "5441472D3032"]
+        assert results[EPC_02].order_number == f"Pedido {EPC_02}"
     finally:
         service.close()
 
 
 def test_invalid_epc_is_ignored_without_lookup_or_visual_event(
+    tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    client = RecordingClient()
     events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
+    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
     try:
         service.start_session()
 
         with caplog.at_level("WARNING"):
             assert not service.submit(tag("INVALID-EPC"))
 
-        assert client.epcs == []
         assert not any(isinstance(event, TagLookupChanged) for event in events)
         assert "tag_lookup_invalid_epc_ignored" in caplog.text
     finally:
         service.close()
 
 
-def test_stop_prevents_new_lookups() -> None:
-    client = RecordingClient()
+def test_logs_every_received_tag_before_local_lookup(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
+    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
+    received = TagRead(
+        epc=EPC_MISSING,
+        reader_id="reader-01",
+        antenna_id=2,
+        read_at=datetime(2026, 10, 6, 12, 34, 56, tzinfo=UTC),
+        rssi=-47,
+    )
+    try:
+        service.start_session()
+
+        with caplog.at_level("INFO"):
+            assert service.submit(received)
+
+        assert "tag_read_received" in caplog.text
+        assert "epc=4D495353494E47" in caplog.text
+        assert "antenna=2" in caplog.text
+        assert "rssi=-47" in caplog.text
+        assert "read_at=2026-10-06T12:34:56+00:00" in caplog.text
+    finally:
+        service.close()
+
+
+def test_stop_prevents_new_lookups(tmp_path: Path) -> None:
+    events: list[TagLookupEvent] = []
+    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
     try:
         service.start_session()
         service.stop_accepting()
@@ -231,82 +214,32 @@ def test_stop_prevents_new_lookups() -> None:
         assert not service.submit(tag(EPC_01))
         time.sleep(0.02)
 
-        assert client.epcs == []
         assert not any(isinstance(event, TagLookupChanged) for event in events)
     finally:
         service.close()
 
 
-def test_in_flight_lookup_can_finish_after_stop() -> None:
-    client = BlockingClient()
+def test_epc_missing_other_dock_or_inactive_is_ignored_without_error(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
-    try:
-        session_id = service.start_session()
-        service.submit(tag(EPC_IN_FLIGHT))
-        assert client.started.wait(1.0)
-
-        service.stop_accepting()
-        client.release.set()
-        wait_until(lambda: len(completed(events, EPC_IN_FLIGHT)) == 1)
-
-        assert completed(events, EPC_IN_FLIGHT)[0].session_id == session_id
-        assert completed(events, EPC_IN_FLIGHT)[0].result.status is TagLookupStatus.FOUND
-    finally:
-        client.release.set()
-        service.close()
-
-
-def test_old_session_result_does_not_update_new_session() -> None:
-    client = BlockingClient()
-    events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 10, events.append)
-    try:
-        old_session = service.start_session()
-        service.submit(tag(EPC_OLD))
-        assert client.started.wait(1.0)
-
-        new_session = service.start_session()
-        service.submit(tag(EPC_NEW))
-        client.release.set()
-        wait_until(lambda: len(completed(events, EPC_NEW)) == 1)
-
-        assert old_session != new_session
-        assert completed(events, EPC_OLD) == []
-        assert completed(events, EPC_NEW)[0].session_id == new_session
-    finally:
-        client.release.set()
-        service.close()
-
-
-def test_queue_full_marks_affected_epc_as_error_without_blocking() -> None:
-    client = BlockingClient()
-    events: list[TagLookupEvent] = []
-    service = TagLookupService(client, 1, events.append)
+    service = TagLookupService(repository(tmp_path), lambda: "D01", 10, events.append)
     try:
         service.start_session()
-        service.submit(tag(EPC_IN_FLIGHT))
-        assert client.started.wait(1.0)
-        service.submit(tag(EPC_QUEUED))
+        assert service.submit(tag(EPC_MISSING))
+        assert service.submit(tag(EPC_OTHER_DOCK))
+        assert service.submit(tag(EPC_INACTIVE))
+        time.sleep(0.1)
 
-        assert not service.submit(tag(EPC_OVERFLOW))
-
-        errors = completed(events, EPC_OVERFLOW)
-        assert len(errors) == 1
-        assert errors[0].result.status is TagLookupStatus.ERROR
-        assert errors[0].result.message == FRIENDLY_ERROR_MESSAGE
+        assert completed(events, EPC_MISSING) == []
+        assert completed(events, EPC_OTHER_DOCK) == []
+        assert completed(events, EPC_INACTIVE) == []
     finally:
-        client.release.set()
         service.close()
 
 
-def test_client_failure_marks_only_that_epc_as_error() -> None:
+def test_local_database_failure_marks_only_that_epc_as_error(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(
-        FailingClient(TagLookupClientError("network unavailable")),
-        10,
-        events.append,
-    )
+    repo = LocalTagRepository(tmp_path / "missing-schema.sqlite3")
+    service = TagLookupService(repo, lambda: "D01", 10, events.append)
     try:
         service.start_session()
         service.submit(tag(EPC_ERROR))

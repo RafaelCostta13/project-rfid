@@ -7,14 +7,21 @@ from rfid_reader.domain import (
     ReaderConfigurationFeedback,
     ReaderConfigurationOutcome,
     ReaderConnectionSettings,
+    WaveshareConfigurationAction,
+    WaveshareConfigurationFeedback,
+    WaveshareConfigurationOutcome,
+    WaveshareConnectionSettings,
 )
+from rfid_reader.services.station_configuration import StationConfigurationFeedback
 from rfid_reader.ui import pages as pages_module
 from rfid_reader.ui.main_window import MainWindow
 from rfid_reader.ui.pages import (
     RFID_SETTINGS_FIELDS,
     SAVE_CONFIGURATION_BUTTON_TEXT,
     TEST_CONNECTION_BUTTON_TEXT,
+    WAVESHARE_SETTINGS_FIELDS,
     RFIDSettingsPage,
+    WaveshareSettingsPanel,
 )
 
 
@@ -49,10 +56,33 @@ def page_without_tk() -> RFIDSettingsPage:
     return page
 
 
+def waveshare_panel_without_tk() -> WaveshareSettingsPanel:
+    panel = object.__new__(WaveshareSettingsPanel)
+    panel._serial_port_var = RecordingVariable()
+    panel._baud_rate_var = RecordingVariable()
+    panel._data_bits_var = RecordingVariable()
+    panel._parity_var = RecordingVariable()
+    panel._stop_bits_var = RecordingVariable()
+    panel._device_id_var = RecordingVariable()
+    panel._test_button = RecordingWidget()
+    panel._feedback_label = RecordingWidget()
+    panel._on_test_connection = lambda *values: None
+    panel._on_save = lambda *values: None
+    return panel
+
+
 def test_settings_page_exposes_required_fields_and_buttons() -> None:
     assert RFID_SETTINGS_FIELDS == ("Nome do reader", "Endereço IP", "Porta")
     assert TEST_CONNECTION_BUTTON_TEXT == "Testar conexão"
     assert SAVE_CONFIGURATION_BUTTON_TEXT == "Salvar configurações"
+    assert WAVESHARE_SETTINGS_FIELDS == (
+        "Porta COM",
+        "Baud rate",
+        "Data bits",
+        "Paridade",
+        "Stop bits",
+        "Device ID",
+    )
 
 
 def test_constructor_preserves_tk_internal_widget_name(
@@ -76,6 +106,9 @@ def test_constructor_preserves_tk_internal_widget_name(
         ReaderConnectionSettings("Reader Doca", "192.168.0.214", 5084),
         lambda name, host, port: None,
         lambda name, host, port: None,
+        WaveshareConnectionSettings("", 9600, 8, "None", 1, 1),
+        lambda *values: None,
+        lambda *values: None,
     )
 
     assert page._name == internal_widget_name
@@ -164,3 +197,94 @@ def test_main_window_delivers_configuration_feedback_from_queue() -> None:
 
     assert page._feedback_label.options["text"] == "Testando conexão..."
     assert page._test_button.options["state"] == "disabled"
+
+
+def test_waveshare_panel_loads_defaults_including_empty_port() -> None:
+    panel = waveshare_panel_without_tk()
+
+    panel.set_settings(WaveshareConnectionSettings("", 9600, 8, "None", 1, 1))
+
+    assert panel._values() == ("", "9600", "8", "None", "1", "1")
+
+
+def test_waveshare_feedback_controls_only_its_test_button() -> None:
+    panel = waveshare_panel_without_tk()
+
+    panel.apply_feedback(
+        WaveshareConfigurationFeedback(
+            WaveshareConfigurationAction.TEST,
+            WaveshareConfigurationOutcome.IN_PROGRESS,
+            "Testando conexão com a Waveshare...",
+        )
+    )
+    assert panel._test_button.options["state"] == "disabled"
+
+    saved = WaveshareConnectionSettings("COM5", 9600, 8, "None", 1, 1)
+    panel.apply_feedback(
+        WaveshareConfigurationFeedback(
+            WaveshareConfigurationAction.SAVE,
+            WaveshareConfigurationOutcome.SUCCESS,
+            "Configurações da Waveshare salvas com sucesso.",
+            saved,
+        )
+    )
+    assert panel._values() == ("COM5", "9600", "8", "None", "1", "1")
+
+
+def test_main_window_delivers_waveshare_feedback_from_its_queue() -> None:
+    panel = waveshare_panel_without_tk()
+    updates: queue.SimpleQueue[WaveshareConfigurationFeedback] = queue.SimpleQueue()
+    updates.put(
+        WaveshareConfigurationFeedback(
+            WaveshareConfigurationAction.TEST,
+            WaveshareConfigurationOutcome.SUCCESS,
+            "Conexão com a Waveshare realizada com sucesso.",
+        )
+    )
+    page = page_without_tk()
+    page._waveshare_panel = panel
+    window = object.__new__(MainWindow)
+    window._waveshare_configuration_updates = updates
+    window._settings_page = page
+
+    window._drain_waveshare_configuration_updates()
+
+    assert panel._feedback_label.options["text"] == (
+        "Conexão com a Waveshare realizada com sucesso."
+    )
+
+
+def test_station_page_loads_empty_dock_and_applies_saved_value() -> None:
+    page = page_without_tk()
+    page._station_dock_var = RecordingVariable()
+    page._station_feedback_label = RecordingWidget()
+    page.set_station_dock("")
+    assert page._station_dock_var.get() == ""
+    assert page._station_feedback_label.options["text"] == "Configure a Doca desta estação."
+    page.set_station_dock("D01")
+    assert page._station_dock_var.get() == "D01"
+
+    calls: list[str] = []
+
+    def save(value: str) -> StationConfigurationFeedback:
+        calls.append(value)
+        return StationConfigurationFeedback(True, "Doca salva.", value.strip().upper())
+
+    page._on_save_station_dock = save
+    page._station_dock_var.set(" d05 ")
+    page._request_save_station_dock()
+    assert calls == [" d05 "]
+    assert page._station_dock_var.get() == "D05"
+    assert page._station_feedback_label.options["text"] == "Doca salva."
+
+
+def test_station_page_preserves_input_on_save_failure() -> None:
+    page = page_without_tk()
+    page._station_dock_var = RecordingVariable("D05")
+    page._station_feedback_label = RecordingWidget()
+    page._on_save_station_dock = lambda value: StationConfigurationFeedback(
+        False, "Falha ao salvar."
+    )
+    page._request_save_station_dock()
+    assert page._station_dock_var.get() == "D05"
+    assert page._station_feedback_label.options["text"] == "Falha ao salvar."

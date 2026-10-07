@@ -3,14 +3,13 @@ from urllib.request import Request
 
 import pytest
 
-import rfid_reader.integrations.sharepoint_client as sharepoint_module
-from rfid_reader.domain import TagLookupStatus
-from rfid_reader.integrations.sharepoint_client import (
+import rfid_reader.integrations.sharepoint_sync_client as sync_module
+from rfid_reader.integrations.sharepoint_sync_client import (
     HttpResponse,
-    SharePointLookupClient,
-    TagLookupHttpError,
-    TagLookupResponseError,
-    TagLookupTimeoutError,
+    PowerAutomateSyncClient,
+    SyncHttpError,
+    SyncResponseError,
+    SyncTimeoutError,
 )
 
 
@@ -21,303 +20,154 @@ def json_response(payload: object, status_code: int = 200) -> HttpResponse:
 def client_with(
     response: HttpResponse,
     capture: list[tuple[Request, float]] | None = None,
-) -> SharePointLookupClient:
+) -> PowerAutomateSyncClient:
     def transport(request: Request, timeout: float) -> HttpResponse:
         if capture is not None:
             capture.append((request, timeout))
         return response
 
-    return SharePointLookupClient(
-        "https://example.test/lookup?token=fake",
+    return PowerAutomateSyncClient(
+        "https://example.test/sync?token=fake",
         7.5,
         transport=transport,
     )
 
 
-def test_sends_post_json_content_type_and_timeout() -> None:
-    captured: list[tuple[Request, float]] = []
-    client = client_with(
-        json_response(
+def valid_payload(count: int = 1) -> dict[str, object]:
+    items: list[dict[str, object]] = []
+    if count:
+        items.append(
             {
-                "sucesso": True,
-                "mensagem": "Etiqueta encontrada",
-                "epc": "EPC-01",
+                "sharepointId": 10,
+                "status": "Ativo",
+                "cliente": "CLIENTE ALFA",
+                "notaFiscal": "100001",
+                "volume": "1/3",
+                "pedido": "500001",
+                "doca": "D01",
+                "epc": "484C443030303030303031",
+                "modified": "2026-10-05T10:10:00Z",
             }
-        ),
-        captured,
-    )
+        )
+    return {
+        "success": True,
+        "syncUntil": "2026-10-05T10:15:00Z",
+        "count": count,
+        "items": items,
+    }
 
-    result = client.lookup("EPC-01")
+
+def test_sends_only_dock_and_modified_since_with_timeout() -> None:
+    captured: list[tuple[Request, float]] = []
+    client = client_with(json_response(valid_payload()), captured)
+
+    result = client.sync("D01", "2026-10-05T10:00:00Z")
 
     request, timeout = captured[0]
+    payload = json.loads(request.data or b"")
     assert request.get_method() == "POST"
     assert request.get_header("Content-type") == "application/json"
-    assert json.loads(request.data or b"") == {"epc": "EPC-01"}
+    assert payload == {"doca": "D01", "modifiedSince": "2026-10-05T10:00:00Z"}
+    assert "epc" not in payload
     assert timeout == 7.5
-    assert result.status is TagLookupStatus.FOUND
-    assert result.message == "Etiqueta encontrada"
+    assert result.sync_until == "2026-10-05T10:15:00Z"
+    assert result.items[0].sharepoint_id == 10
+    assert result.items[0].epc == "484C443030303030303031"
 
 
-def test_sends_original_hex_epc_without_ascii_conversion() -> None:
-    captured: list[tuple[Request, float]] = []
-    epc = "484C44303130313237353835"
-    client = client_with(
-        json_response(
-            {
-                "sucesso": True,
-                "mensagem": "Etiqueta encontrada",
-                "epc": epc,
-            }
-        ),
-        captured,
-    )
+def test_accepts_empty_incremental_response() -> None:
+    client = client_with(json_response(valid_payload(0)))
 
-    result = client.lookup(epc)
+    result = client.sync("D01", "2026-10-05T10:15:00Z")
 
-    request, _ = captured[0]
-    assert json.loads(request.data or b"") == {"epc": epc}
-    assert result.epc == epc
+    assert result.sync_until == "2026-10-05T10:15:00Z"
+    assert result.items == ()
 
 
-def test_extracts_additional_fields_from_power_automate_body() -> None:
-    client = client_with(
-        json_response(
-            {
-                "statusCode": "200",
-                "headers": {"Content-Type": "application/json"},
-                "body": {
-                    "sucesso": True,
-                    "mensagem": "EPC localizado com sucesso",
-                    "epc": "EPC-01",
-                    "cliente": "HARLEY DAVIDSON",
-                    "notaFiscal": "00127585",
-                    "pedido": "00100066805",
-                    "volume": "1/2",
-                    "doca": "",
-                },
-            }
-        )
-    )
+def test_extracts_payload_from_power_automate_body_string() -> None:
+    client = client_with(json_response({"body": json.dumps(valid_payload())}))
 
-    result = client.lookup("EPC-01")
+    result = client.sync("D01", "")
 
-    assert result.status is TagLookupStatus.FOUND
-    assert result.message == "EPC localizado com sucesso"
-    assert result.customer == "HARLEY DAVIDSON"
-    assert result.invoice_number == "00127585"
-    assert result.order_number == "00100066805"
-    assert result.volume == "1/2"
-    assert result.dock == ""
+    assert result.items[0].customer == "CLIENTE ALFA"
 
 
-def test_keeps_backward_compatibility_with_payload_at_root() -> None:
-    client = client_with(
-        json_response(
-            {
-                "sucesso": True,
-                "mensagem": "Encontrada",
-                "epc": "EPC-01",
-                "cliente": "Cliente legado",
-            }
-        )
-    )
+def test_accepts_power_automate_stringified_scalar_values() -> None:
+    payload = valid_payload()
+    payload["success"] = "true"
+    payload["count"] = "1"
+    item = payload["items"][0]
+    assert isinstance(item, dict)
+    item["sharepointId"] = "10"
+    payload["items"] = json.dumps(payload["items"])
+    client = client_with(json_response({"body": payload}))
 
-    result = client.lookup("EPC-01")
+    result = client.sync("D01", "")
 
-    assert result.status is TagLookupStatus.FOUND
-    assert result.customer == "Cliente legado"
+    assert result.items[0].sharepoint_id == 10
+    assert result.items[0].epc == "484C443030303030303031"
 
 
-def test_missing_and_null_additional_fields_become_empty_text() -> None:
-    client = client_with(
-        json_response(
-            {
-                "body": {
-                    "sucesso": True,
-                    "mensagem": "Encontrada",
-                    "epc": "EPC-01",
-                    "cliente": None,
-                    "notaFiscal": None,
-                    "doca": None,
-                }
-            }
-        )
-    )
+def test_accepts_direct_power_automate_item_list_without_sync_envelope() -> None:
+    item = {
+        "sharepointId": 10,
+        "status": "Ativo",
+        "cliente": "CLIENTE ALFA",
+        "notafiscal": "100001",
+        "volume": "1/3",
+        "pedido": "500001",
+        "doca": "D01",
+        "epc": "484C443030303030303031",
+        "modified": "2026-10-05T10:10:00Z",
+    }
+    client = client_with(json_response([item]))
 
-    result = client.lookup("EPC-01")
+    result = client.sync("D01", "")
 
-    assert result.customer == ""
-    assert result.invoice_number == ""
-    assert result.order_number == ""
-    assert result.volume == ""
-    assert result.dock == ""
+    assert result.sync_until == "2026-10-05T10:10:00Z"
+    assert len(result.items) == 1
+    assert result.items[0].invoice_number == "100001"
 
 
-def test_numeric_additional_fields_are_normalized_as_text() -> None:
-    client = client_with(
-        json_response(
-            {
-                "body": {
-                    "sucesso": False,
-                    "mensagem": "Não localizada",
-                    "epc": "EPC-01",
-                    "notaFiscal": 127585,
-                    "pedido": 100066805,
-                    "volume": 2,
-                    "doca": 4,
-                }
-            }
-        )
-    )
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"success": False, "syncUntil": "T", "count": 0, "items": []},
+        {"success": True, "syncUntil": "T", "count": 1, "items": []},
+        {"success": True, "syncUntil": "T", "count": 0, "items": {}},
+        {"success": True, "count": 0, "items": []},
+        {"success": True, "syncUntil": "T", "count": 1, "items": [{}]},
+    ],
+)
+def test_rejects_invalid_payloads(payload: object) -> None:
+    client = client_with(json_response(payload))
 
-    result = client.lookup("EPC-01")
-
-    assert result.status is TagLookupStatus.NOT_FOUND
-    assert result.invoice_number == "127585"
-    assert result.order_number == "100066805"
-    assert result.volume == "2"
-    assert result.dock == "4"
-
-
-@pytest.mark.parametrize("success", [True, "true", "True", 1, "1"])
-def test_normalizes_supported_true_values(success: object) -> None:
-    client = client_with(
-        json_response(
-            {
-                "sucesso": success,
-                "mensagem": "Encontrada",
-                "epc": "EPC-01",
-            }
-        )
-    )
-
-    assert client.lookup("EPC-01").status is TagLookupStatus.FOUND
-
-
-@pytest.mark.parametrize("success", [False, "false", "False", 0, "0"])
-def test_normalizes_supported_false_values(success: object) -> None:
-    client = client_with(
-        json_response(
-            {
-                "sucesso": success,
-                "mensagem": "Etiqueta não localizada",
-                "epc": "EPC-01",
-            }
-        )
-    )
-
-    result = client.lookup("EPC-01")
-
-    assert result.status is TagLookupStatus.NOT_FOUND
-    assert result.message == "Etiqueta não localizada"
-
-
-@pytest.mark.parametrize("success", [None, "other", 2, 1.0, 0.0, [], {}])
-def test_rejects_invalid_success_values(success: object) -> None:
-    client = client_with(
-        json_response(
-            {
-                "sucesso": success,
-                "mensagem": "Resposta inválida",
-                "epc": "EPC-01",
-            }
-        )
-    )
-
-    with pytest.raises(TagLookupResponseError, match="sucesso"):
-        client.lookup("EPC-01")
+    with pytest.raises(SyncResponseError):
+        client.sync("D01", "")
 
 
 def test_rejects_non_success_http_status() -> None:
     client = client_with(HttpResponse(503, b"unavailable"))
 
-    with pytest.raises(TagLookupHttpError) as raised:
-        client.lookup("EPC-01")
+    with pytest.raises(SyncHttpError) as raised:
+        client.sync("D01", "")
 
     assert raised.value.status_code == 503
-
-
-def test_propagates_transport_timeout() -> None:
-    def timeout(request: Request, timeout_seconds: float) -> HttpResponse:
-        raise TagLookupTimeoutError("timeout")
-
-    client = SharePointLookupClient(
-        "https://example.test/lookup",
-        1.0,
-        transport=timeout,
-    )
-
-    with pytest.raises(TagLookupTimeoutError):
-        client.lookup("EPC-01")
 
 
 def test_converts_urlopen_timeout_to_known_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def timeout(request: Request, timeout: float) -> HttpResponse:
         raise TimeoutError
 
-    monkeypatch.setattr(sharepoint_module, "urlopen", timeout)
-    client = SharePointLookupClient("https://example.test/lookup", 1.0)
+    monkeypatch.setattr(sync_module, "urlopen", timeout)
+    client = PowerAutomateSyncClient("https://example.test/sync", 1.0)
 
-    with pytest.raises(TagLookupTimeoutError):
-        client.lookup("EPC-01")
+    with pytest.raises(SyncTimeoutError):
+        client.sync("D01", "")
 
 
 def test_rejects_invalid_json() -> None:
     client = client_with(HttpResponse(200, b"not-json"))
 
-    with pytest.raises(TagLookupResponseError, match="JSON"):
-        client.lookup("EPC-01")
-
-
-@pytest.mark.parametrize("body", [None, "not-an-object", []])
-def test_rejects_invalid_body_structure(body: object) -> None:
-    client = client_with(json_response({"statusCode": "200", "body": body}))
-
-    with pytest.raises(TagLookupResponseError, match="body"):
-        client.lookup("EPC-01")
-
-
-def test_envelope_without_body_or_lookup_fields_is_invalid() -> None:
-    client = client_with(
-        json_response(
-            {
-                "statusCode": "200",
-                "headers": {"Content-Type": "application/json"},
-            }
-        )
-    )
-
-    with pytest.raises(TagLookupResponseError, match="campos obrigatórios"):
-        client.lookup("EPC-01")
-
-
-@pytest.mark.parametrize("missing_field", ["sucesso", "mensagem", "epc"])
-def test_rejects_missing_required_fields(missing_field: str) -> None:
-    payload: dict[str, object] = {
-        "sucesso": True,
-        "mensagem": "Encontrada",
-        "epc": "EPC-01",
-    }
-    del payload[missing_field]
-    client = client_with(json_response(payload))
-
-    with pytest.raises(TagLookupResponseError, match=missing_field):
-        client.lookup("EPC-01")
-
-
-def test_rejects_response_for_a_different_epc() -> None:
-    client = client_with(
-        json_response(
-            {
-                "body": {
-                    "sucesso": True,
-                    "mensagem": "Encontrada",
-                    "epc": "OTHER-EPC",
-                    "cliente": "Cliente incorreto",
-                }
-            }
-        )
-    )
-
-    with pytest.raises(TagLookupResponseError, match="diverge"):
-        client.lookup("EPC-01")
+    with pytest.raises(SyncResponseError, match="JSON"):
+        client.sync("D01", "")

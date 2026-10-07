@@ -2649,4 +2649,4 @@ Enquanto a atualização dos dados ocorrer de forma independente:
         ↓
     salvar syncUntil
 
-Essa passa a ser a arquitetura oficial para consulta e atualização da base do software RFID.    
+Essa passa a ser a arquitetura oficial para consulta e atualização da base do software RFID.

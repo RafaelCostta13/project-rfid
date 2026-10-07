@@ -8,6 +8,7 @@ from rfid_reader.domain.inventory import (
     InventoryStatusChanged,
     TagReceived,
 )
+from rfid_reader.domain.local_tag import LocalTagRecord, SyncControl
 from rfid_reader.domain.reader_configuration import (
     ReaderConfigurationAction,
     ReaderConfigurationFeedback,
@@ -24,6 +25,12 @@ from rfid_reader.domain.tag_lookup import (
     TagLookupStatus,
 )
 from rfid_reader.domain.tag_read import TagRead
+from rfid_reader.domain.waveshare_configuration import (
+    WaveshareConfigurationAction,
+    WaveshareConfigurationFeedback,
+    WaveshareConfigurationOutcome,
+    WaveshareConnectionSettings,
+)
 
 __all__ = [
     "ConnectionKind",
@@ -32,10 +39,12 @@ __all__ = [
     "InventoryEvent",
     "InventoryStatus",
     "InventoryStatusChanged",
+    "LocalTagRecord",
     "ReaderConfigurationAction",
     "ReaderConfigurationFeedback",
     "ReaderConfigurationOutcome",
     "ReaderConnectionSettings",
+    "SyncControl",
     "TagRead",
     "TagReceived",
     "TagLookupChanged",
@@ -45,4 +54,8 @@ __all__ = [
     "TagLookupSessionSummary",
     "TagLookupSessionStarted",
     "TagLookupStatus",
+    "WaveshareConfigurationAction",
+    "WaveshareConfigurationFeedback",
+    "WaveshareConfigurationOutcome",
+    "WaveshareConnectionSettings",
 ]

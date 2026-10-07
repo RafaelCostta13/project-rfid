@@ -1,4 +1,4 @@
-import socket
+﻿import socket
 from pathlib import Path
 
 import pytest
@@ -15,7 +15,7 @@ def valid_environment() -> dict[str, str]:
         "RFID_READER_NAME": "fx9600-test",
         "RFID_ANTENNAS": "1,2",
         "RFID_DEDUPLICATION_WINDOW_SECONDS": "2.0",
-        "SHAREPOINT_LOOKUP_URL": "https://example.test/lookup",
+        "SHAREPOINT_SYNC_URL": "https://example.test/sync",
         "RFID_LOG_LEVEL": "INFO",
     }
 
@@ -45,7 +45,7 @@ def test_check_config_returns_error_for_invalid_configuration(
     assert exit_code != 0
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "SHAREPOINT_LOOKUP_URL" in captured.err
+    assert "SHAREPOINT_SYNC_URL" in captured.err
 
 
 def test_check_config_does_not_access_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -86,3 +86,4 @@ def test_show_reports_application_start_error(
 
     assert main(["show"], valid_environment(), tmp_path / ".env") == 1
     assert "interface indisponível" in capsys.readouterr().err
+

@@ -9,6 +9,7 @@ class PageId(StrEnum):
 
     SYSTEM_STATUS = "system_status"
     RFID_SETTINGS = "rfid_settings"
+    WAVESHARE_DIAGNOSTIC = "waveshare_diagnostic"
 
 
 @dataclass(slots=True)

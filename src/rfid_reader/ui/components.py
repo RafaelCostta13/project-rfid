@@ -24,10 +24,13 @@ STATUS_COLORS = {
 CONNECTION_NAMES = {
     ConnectionKind.RFID: "RFID",
     ConnectionKind.INTERNET: "Internet",
+    ConnectionKind.WAVESHARE: "Comandos",
+    ConnectionKind.DATABASE: "Base de dados",
+    ConnectionKind.SYNC: "Sincronização",
 }
 PAGE_NAMES = {
     PageId.SYSTEM_STATUS: "Start",
-    PageId.RFID_SETTINGS: "Configurações RFID",
+    PageId.RFID_SETTINGS: "Configurações",
 }
 
 
@@ -106,7 +109,7 @@ class Sidebar(tk.Frame):
         )
         self.grid_propagate(False)
         self._buttons: dict[PageId, tk.Button] = {}
-        for page in PageId:
+        for page in (PageId.SYSTEM_STATUS, PageId.RFID_SETTINGS):
             button = tk.Button(
                 self,
                 text=PAGE_NAMES[page],
