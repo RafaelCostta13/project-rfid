@@ -36,6 +36,11 @@ class TagLookupResult:
     volume: str = ""
     dock: str = ""
     record_status: str = ""
+    first_read: bool | None = None
+    duplicate: bool | None = None
+    read_count: int | None = None
+    first_read_at: str | None = None
+    last_read_at: str | None = None
 
 
 @dataclass(slots=True)

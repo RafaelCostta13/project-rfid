@@ -143,6 +143,20 @@ def test_save_updates_store_and_memory_without_testing_connection() -> None:
     assert events[-1].settings == expected
 
 
+def test_configuration_only_service_saves_without_a_serial_tester() -> None:
+    store = RecordingStore()
+    events: list[WaveshareConfigurationFeedback] = []
+    service = WaveshareConfigurationService(application_settings(), store, None, events.append)
+    try:
+        assert service.save(*form_values("COM10"))
+        assert store.saved == [service.current()]
+        assert not service.test_connection(*form_values("COM10"))
+        assert events[-1].outcome is WaveshareConfigurationOutcome.ERROR
+        assert "não integrado" in events[-1].message
+    finally:
+        service.close()
+
+
 def test_save_failure_does_not_change_memory() -> None:
     events: list[WaveshareConfigurationFeedback] = []
     service = WaveshareConfigurationService(

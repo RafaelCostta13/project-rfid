@@ -7,6 +7,7 @@ import pytest
 
 from rfid_reader.domain import (
     LocalTagRecord,
+    RfidReadResult,
     TagLookupChanged,
     TagLookupEvent,
     TagLookupSessionStarted,
@@ -83,11 +84,20 @@ def repository(tmp_path: Path) -> LocalTagRepository:
 class LocalCompatibilityClient:
     """Adapta a fixture SQLite antiga ao contrato do cliente Backend nos testes."""
 
-    def __init__(self, repository: LocalTagRepository, dock: str) -> None:
+    def __init__(
+        self,
+        repository: LocalTagRepository,
+        dock: str,
+        post_error: Exception | None = None,
+    ) -> None:
         self._repository = repository
         self._dock = dock
+        self._post_error = post_error
+        self.get_requests: list[str] = []
+        self.post_requests: list[str] = []
 
     def get_rfid_record(self, epc: str) -> RfidRecordData | None:
+        self.get_requests.append(epc)
         try:
             result = self._repository.find_by_epc(epc, self._dock)
         except Exception as error:
@@ -114,6 +124,21 @@ class LocalCompatibilityClient:
             read_count=0,
         )
 
+    def create_rfid_read(self, epc: str) -> RfidReadResult:
+        self.post_requests.append(epc)
+        if self._post_error is not None:
+            raise self._post_error
+        return RfidReadResult(
+            success=True,
+            epc=epc,
+            first_read=True,
+            duplicate=False,
+            status="lido",
+            read_count=1,
+            first_read_at="2026-10-07T10:00:00Z",
+            last_read_at="2026-10-07T10:00:00Z",
+        )
+
 
 def completed(events: list[TagLookupEvent], epc: str) -> list[TagLookupChanged]:
     return [
@@ -138,6 +163,53 @@ def test_deduplicates_same_reader_antenna_and_epc_in_one_session(tmp_path: Path)
         wait_until(lambda: len(completed(events, EPC_01)) == 1)
 
         assert completed(events, EPC_01)[0].result.customer == f"Cliente {EPC_01}"
+    finally:
+        service.close()
+
+
+def test_found_epc_executes_one_get_and_one_post_in_session(tmp_path: Path) -> None:
+    events: list[TagLookupEvent] = []
+    client = LocalCompatibilityClient(repository(tmp_path), "D01")
+    service = TagLookupService(lambda: client, 10, events.append)
+    try:
+        service.start_session()
+        assert service.submit(tag(EPC_01))
+        assert not service.submit(tag(EPC_01))
+        wait_until(lambda: len(completed(events, EPC_01)) == 1)
+        assert client.get_requests == [EPC_01]
+        assert client.post_requests == [EPC_01]
+        assert completed(events, EPC_01)[0].result.record_status == "lido"
+    finally:
+        service.close()
+
+
+def test_not_found_does_not_execute_post(tmp_path: Path) -> None:
+    events: list[TagLookupEvent] = []
+    client = LocalCompatibilityClient(repository(tmp_path), "D01")
+    service = TagLookupService(lambda: client, 10, events.append)
+    try:
+        service.start_session()
+        assert service.submit(tag(EPC_MISSING))
+        time.sleep(0.1)
+        assert client.get_requests == [EPC_MISSING]
+        assert client.post_requests == []
+    finally:
+        service.close()
+
+
+def test_post_failure_is_not_retried_in_same_session(tmp_path: Path) -> None:
+    events: list[TagLookupEvent] = []
+    client = LocalCompatibilityClient(
+        repository(tmp_path), "D01", post_error=BackendClientError("timeout")
+    )
+    service = TagLookupService(lambda: client, 10, events.append)
+    try:
+        service.start_session()
+        assert service.submit(tag(EPC_01))
+        assert not service.submit(tag(EPC_01))
+        wait_until(lambda: len(completed(events, EPC_01)) == 1)
+        assert client.post_requests == [EPC_01]
+        assert completed(events, EPC_01)[0].result.status is TagLookupStatus.ERROR
     finally:
         service.close()
 

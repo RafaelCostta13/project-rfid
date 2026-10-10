@@ -1,1 +1,1 @@
-"""Interface gráfica da aplicação."""
+"""Interface Qt Quick/QML da aplicação."""

@@ -15,6 +15,7 @@ from rfid_reader.domain.reader_configuration import (
     ReaderConfigurationOutcome,
     ReaderConnectionSettings,
 )
+from rfid_reader.domain.rfid_read import RfidReadResult
 from rfid_reader.domain.tag_lookup import (
     TagLookupChanged,
     TagLookupEvent,
@@ -44,6 +45,7 @@ __all__ = [
     "ReaderConfigurationFeedback",
     "ReaderConfigurationOutcome",
     "ReaderConnectionSettings",
+    "RfidReadResult",
     "SyncControl",
     "TagRead",
     "TagReceived",

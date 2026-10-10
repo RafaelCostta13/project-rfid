@@ -217,3 +217,56 @@ def test_get_rfid_record_rejects_inconsistent_contract(payload: dict[str, object
 
     with pytest.raises(BackendClientError):
         client.get_rfid_record("E280691500005029EEA6A275")
+
+
+def test_create_rfid_read_posts_only_normalized_epc_and_parses_success() -> None:
+    requests: list[Request] = []
+
+    def transport(request: Request, timeout: float) -> HttpResponse:
+        requests.append(request)
+        return response(
+            200,
+            {
+                "success": True,
+                "epc": "E280691500005029EEA6A275",
+                "first_read": False,
+                "duplicate": True,
+                "status": "lido",
+                "read_count": 2,
+                "first_read_at": "2026-10-07T10:00:00Z",
+                "last_read_at": "2026-10-07T11:00:00Z",
+            },
+        )
+
+    result = BackendRFIDClient("https://backend.test", 3.0, transport=transport).create_rfid_read(
+        " e280691500005029eea6a275 "
+    )
+
+    assert result.success
+    assert result.duplicate
+    assert result.read_count == 2
+    assert requests[0].full_url == "https://backend.test/api/v1/rfid_reads"
+    assert requests[0].data == b'{"epc": "E280691500005029EEA6A275"}'
+    assert set(json.loads(requests[0].data)) == {"epc"}
+
+
+@pytest.mark.parametrize(
+    ("status", "payload"),
+    [
+        (404, {"success": False, "error": "epc_not_found"}),
+        (422, {"success": False, "error": "epc_required"}),
+        (200, {"success": False}),
+        (200, {"success": True, "epc": "OTHER"}),
+    ],
+)
+def test_create_rfid_read_rejects_unsuccessful_or_inconsistent_response(
+    status: int, payload: dict[str, object]
+) -> None:
+    client = BackendRFIDClient(
+        "https://backend.test",
+        3.0,
+        transport=lambda request, timeout: response(status, payload),
+    )
+
+    with pytest.raises(BackendClientError):
+        client.create_rfid_read("E280691500005029EEA6A275")

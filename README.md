@@ -1,16 +1,15 @@
 # RFID Reader
 
 Aplicação Python para comunicação com leitores RFID, inicialmente o Zebra FX9600.
-A tela principal apresenta o estado da sessão LLRP e do acesso à internet, além
-de permitir iniciar e parar um inventário manual para visualizar os EPCs
-confirmados pela base consultada.
+A interface oficial usa PySide6 + QML, com indicadores de disponibilidade,
+inventário automático por DI1/DI2, diagnóstico Waveshare e EPCs confirmados e
+registrados pelo Backend Rails. O runtime e os serviços independem da interface.
 
 ## Requisitos
 
 - Python 3.12 ou superior;
 - `pip`;
-- suporte Tkinter do Python (normalmente incluído no Windows; no Linux pode exigir
-  o pacote `python3-tk`);
+- PySide6, instalado com as dependências do projeto;
 - um terminal Bash, PowerShell ou Prompt de Comando.
 
 ## Preparação do ambiente
@@ -58,20 +57,17 @@ são sempre validados. `RFID_CONNECTION_TIMEOUT_SECONDS` controla o timeout das
 sondagens e `RFID_STATUS_CHECK_INTERVAL_SECONDS` define o intervalo entre
 atualizações.
 
-Para consultar os EPCs pelo fluxo do Power Automate, configure também:
+Para consultar EPCs e registrar passagens no Backend Rails, configure também:
 
 ```dotenv
-SHAREPOINT_LOOKUP_URL=https://endpoint-do-fluxo
-SHAREPOINT_LOOKUP_TIMEOUT_SECONDS=10
-SHAREPOINT_LOOKUP_QUEUE_SIZE=100
+RFID_BACKEND_BASE_URL=http://backend-de-testes:3000
 ```
 
-`SHAREPOINT_LOOKUP_URL` é obrigatória e pode conter uma assinatura de acesso.
-Mantenha seu valor somente no `.env`; a aplicação não exibe nem registra essa URL
-nos logs.
+Health, GET EPC e POST de passagem usam o cliente HTTP existente. URLs e
+segredos do ambiente devem permanecer no `.env` externo ao pacote.
 
-A Waveshare Modbus RTU Relay é opcional nesta etapa. A porta serial começa
-vazia; os demais parâmetros usam os valores validados no protótipo:
+A porta Waveshare começa vazia; configure-a para habilitar o inventário
+automático por sensores. Os demais parâmetros usam os valores validados:
 
 ```dotenv
 WAVESHARE_SERIAL_PORT=
@@ -87,14 +83,14 @@ WAVESHARE_DEVICE_ID=1
 Com o ambiente virtual ativado:
 
 ```bash
-rfid-reader show
+rfid-reader --env-file .env
 ```
 
 A aplicação mantém uma única sessão LLRP com o FX9600 e a reutiliza tanto para o
-status quanto para o inventário manual. Na página **Start**, use **Iniciar
-leitura** e **Parar leitura** para controlar o inventário. A tabela apresenta
+status quanto para o inventário. Na página **Start**, **Iniciar leitura** habilita
+o automático e aguarda DI1; **Parar leitura** cancela o ciclo. A tabela apresenta
 somente EPCs confirmados pela base, com status, cliente, nota fiscal, volume,
-pedido e doca quando disponibilizados pelo Power Automate. EPCs não encontrados,
+pedido e doca quando disponibilizados pelo Backend. EPCs não encontrados,
 inválidos ou afetados por erro técnico não criam linhas. Campos ausentes ou nulos
 permanecem vazios.
 
@@ -123,13 +119,14 @@ paralelo.
 
 Na página **Configurações RFID**, nome, IP/hostname e porta podem ser testados e
 salvos no mesmo `.env`. O teste é temporário, não inicia inventário e não altera
-o arquivo. O salvamento preserva as demais chaves e prepara os novos dados para a
+o arquivo; utiliza o mesmo reader e restaura a conexão salva ao terminar.
+O salvamento preserva as demais chaves e prepara os novos dados para a
 próxima conexão, sem interromper ou reconectar automaticamente a sessão atual.
 
 Na mesma área de **Configurações**, a seção **Waveshare** permite testar e salvar
-os parâmetros Modbus RTU. O teste usa somente uma leitura pontual de DI1/DI2,
-fecha a porta em seguida e não aciona relés. Salvar não conecta automaticamente à
-placa, e a ausência de porta configurada não impede o funcionamento do RFID.
+os parâmetros Modbus RTU. O teste usa a sessão serial existente quando os
+parâmetros coincidem, ou uma sondagem exclusiva pelo gate serial; não aciona
+relés. Salvar não troca os parâmetros de uma sessão serial já aberta.
 
 O botão **Testar Waveshare**, dentro da mesma seção, abre o diagnóstico manual.
 Use **Conectar** para acompanhar D1–D5 e consultar o estado de CH1–CH8; cada
@@ -140,7 +137,7 @@ não aciona relés por conta própria e não inicia o inventário RFID.
 ## Operação automática por sensores (RF012 — Windows)
 
 O worker operacional da Waveshare utiliza uma única sessão serial. Quando
-Internet, RFID, Waveshare e Base de dados estão conectados, CH1 indica que o
+Internet, RFID, Waveshare e Sistema estão conectados, CH1 indica que o
 sistema está apto.
 Na página **Start**, **Iniciar leitura** habilita o modo automático, mas não
 inicia imediatamente o inventário.
@@ -160,7 +157,7 @@ As latências físicas incluem polling, comunicação serial e confirmação LLR
 |---|---|---|---|---|
 | Sistema apto, aguardando DI1 | OFF | ON | OFF | OFF |
 | Ciclo iniciado por DI1 | ON | OFF | ON | OFF |
-| Internet, RFID ou Base de dados indisponível, com Waveshare acessível | OFF | OFF | OFF | ON |
+| Internet, RFID ou Sistema indisponível, com Waveshare acessível | OFF | OFF | OFF | ON |
 | Waveshare indisponível | OFF | estado desconhecido | estado desconhecido | estado desconhecido |
 
 Somente a borda de DI2 `True → False` ou o timeout encerra o ciclo. Depois da
@@ -177,7 +174,7 @@ ao sair, o controle operacional é retomado.
 
 Falha Waveshare encerra o modo automático, cancela o timer e solicita Stop RFID;
 sem comunicação, os relés ficam com estado desconhecido. Falha de Internet ou do
-Zebra ou da Base de dados cancela o ciclo e aciona CH3 quando a Waveshare está
+Zebra ou do Sistema cancela o ciclo e aciona CH3 quando a Waveshare está
 acessível. Após a recuperação, CH1 volta a indicar disponibilidade sem iniciar
 uma leitura por si só.
 
@@ -201,46 +198,20 @@ têm precedência sobre o `.env`; evite definir a mesma chave nos dois lugares.
 Os formulários possuem rolagem para manter campos e botões acessíveis em janelas
 menores.
 
-O indicador **Base de dados** usa o mesmo padrão visual dos demais: inicia em
-**Verificando** e só mostra **Conectado** após resposta HTTP/JSON válida da fonte
-remota. **Erro** ou **Desconectado** significam base não operacional.
+A barra da tela Start apresenta **RFID**, **Internet**, **Comandos** e
+**Sistema**, nessa ordem. A avaliação de Base de dados continua interna, sem
+indicador separado, conforme RF018 — Ajuste 01.
 
-A verificação reutiliza `SharePointLookupClient` e `SHAREPOINT_LOOKUP_URL`, com
-POST `{"epc": "<DATABASE_CHECK_EPC>"}`. O EPC padrão de sondagem contém 24 zeros;
-ele não representa uma leitura física e seu resultado não entra na tabela,
-fila de leituras ou contador. O contrato existente considera tanto etiqueta
-encontrada quanto não encontrada como consultas válidas. Não há download completo
-da Doca, chamada de sincronização, SQLite ou persistência de itens/timestamps.
-Essa consulta não depende de Doca; a ausência de Doca não impede este teste.
+A operação atual usa `status` e `database` da mesma resposta health do Backend,
+sem sondagem de EPC artificial, consulta SQLite ou Power Automate. A aptidão
+segue Sistema/`status`, conforme ADR-013; Base de dados é um indicador
+observacional. O contrato histórico do RF013/ADR-009 permanece documentado
+para referência, mas não integra a composição operacional atual.
 
-`DATABASE_CHECK_INTERVAL_SECONDS` tem padrão 60 e mínimo 30 segundos. O
-`ConnectionMonitor` executa o verificador em background; as chamadas remotas
-respeitam esse intervalo após a conclusão da anterior, com resolução do intervalo
-geral `RFID_STATUS_CHECK_INTERVAL_SECONDS` (padrão 5 segundos). O timeout é o
-existente `SHAREPOINT_LOOKUP_TIMEOUT_SECONDS` (padrão 10 segundos). Timeout, erro
-HTTP, autenticação, rede ou resposta inválida deixam a base indisponível. Logs
-informam a categoria da falha e o código HTTP, sem URL, resposta ou credenciais.
-Sem Internet, novas sondagens ficam suspensas; após recuperação observada, a
-próxima passagem pelo monitor pode consultar novamente. Ao fechar, não são
-iniciadas novas chamadas e a aplicação aguarda a requisição em andamento.
-
-Todos os quatro serviços precisam estar conectados para habilitar novos ciclos.
-Base indisponível também cancela um ciclo ativo pela regra já existente do RF012:
-CH1 OFF, CH2 OFF, CH3 ON quando a Waveshare responde. A recuperação permite
-voltar a CH1 sem iniciar automaticamente um ciclo. CH4–CH8, sensores, timer de
-60 segundos e consultas operacionais dos EPCs permanecem com o fluxo existente.
-
-Limitação: o repositório não contém contrato executável de uma operação leve do
-novo fluxo de sincronização. Não se usa `modifiedSince=""`, pois pode provocar
-carga completa. Validar no Power Automate real que uma falha do SharePoint gera
-erro HTTP/contrato, e não uma resposta normal de “não encontrado”. O cliente não
-consegue distinguir falhas que o servidor disfarça como resposta válida.
-Consulte [ADR-009](docs/adr/ADR-009-doca-e-status-da-base-remota.md).
-
-Validação manual pendente no Windows: salvar D01, reabrir, trocar por D05;
-observar o indicador com o fluxo disponível e indisponível mantendo Internet;
-confirmar CH1/CH3 e bloqueio dos ciclos no FX9600/Waveshare reais. Os testes
-automatizados usam transporte HTTP falso e não comprovam a integração física.
+O único `ConnectionMonitor` verifica os serviços em background, no intervalo
+`RFID_STATUS_CHECK_INTERVAL_SECONDS`, usando os timeouts existentes. Ao fechar,
+a aplicação invalida as sessões e aguarda as requisições em andamento.
+Validação física de doca, disponibilidade, relés e leitura permanece pendente.
 
 ## Verificar a configuração
 
@@ -258,6 +229,115 @@ python -m rfid_reader.cli check-config
 
 Esse comando somente valida e apresenta a configuração; ele não acessa a rede nem
 tenta se conectar ao FX9600.
+
+## Protótipo Qt/QML — RF018, Fase 1
+
+A prévia exige `--preview`: usa somente dados fictícios, não lê `.env`,
+não acessa Backend, Zebra ou porta serial e não registra passagens.
+
+No ambiente virtual com Python 3.12+:
+
+```powershell
+python -m pip install -e ".[dev]"
+python -m rfid_reader.cli --preview
+```
+
+Também é possível executar `rfid-reader-qt --preview`. A prévia abre maximizada;
+`--windowed` abre em janela. A sidebar permite comparar Corporate Dark/Navy Dark
+e os cenários apto, lendo, falha, verificando e vazio. Configurações permanece
+desabilitada nesse modo. Iniciar/Parar são controles apenas simulados.
+
+Para gerar uma captura da renderização QML e encerrar:
+
+```powershell
+python -m rfid_reader.cli --preview --theme corporate --screenshot docs/evidencias/rf018/corporate-dark.png
+python -m rfid_reader.cli --preview --theme navy --scenario reading --screenshot docs/evidencias/rf018/navy-dark.png
+```
+
+`--size 1600 900` altera a dimensão da captura em pixels lógicos. Os recursos
+QML/SVG são locais e incluídos na distribuição Python e no bundle Windows.
+Corporate Dark foi aprovado para a
+integração incremental. Auditoria, decisões e rollback estão na
+[ADR-015](docs/adr/ADR-015-migracao-incremental-pyside6-qml.md).
+
+PySide6 é uma dependência de produção; instale as dependências completas para
+executar os testes Qt. Hardware não é acessado pelo conjunto padrão de testes.
+
+### Configurações locais Qt — RF018, etapa 2.1
+
+```powershell
+python -m rfid_reader.cli_qt --configure --page settings --env-file .env
+```
+
+Esse modo lê a configuração validada e permite salvar nome/IP/porta RFID,
+parâmetros Waveshare, doca e URL do Backend pelos serviços existentes. As
+gravações são executadas fora da thread da interface, uma por vez, preservando
+as demais chaves do arquivo. Após salvar, os valores normalizados aparecem no
+formulário; erros mantêm o rascunho para correção. Doca admite sugestões e texto
+livre conforme a validação já existente. A tela adapta as colunas e oferece scroll.
+
+Sem `--env-file`, utiliza o `.env` encontrado a partir do diretório atual, ou
+o `.env` desse diretório se não houver arquivo. Variáveis de ambiente mantêm
+prioridade sobre o arquivo, como no legado; uma variável já exportada também
+prevalecerá ao reabrir depois de salvar. Não execute duas interfaces salvando
+simultaneamente no mesmo arquivo: a serialização cobre esta instância, não
+processos diferentes.
+
+Start/Stop, testes de conexão e diagnóstico permanecem desabilitados. Não há
+inventário, consultas, POST, monitoramento ativo, conexão COM ou comandos de relé.
+Os indicadores ficam **Desconhecido** porque esse modo não inicia o monitor.
+A tabela começa vazia, sem dados simulados.
+
+Ver [captura de Configurações](docs/evidencias/rf018/configuracoes.png).
+
+## Operação Qt — RF018
+
+A integração operacional utiliza `ApplicationRuntime` e os serviços existentes
+de Zebra, Waveshare e Backend. A composição e os widgets Tkinter foram removidos.
+Para abrir a interface QML com as conexões reais em um ambiente preparado:
+
+```powershell
+python -m rfid_reader.cli --env-file .env
+```
+
+`rfid-reader`, `rfid-reader show` e `rfid-reader-qt` abrem a operação Qt.
+`--operate` continua aceito como opção explícita. Iniciar Leitura habilita o modo
+automático e aguarda DI1 ATIVA → DESATIVADA; o inventário termina por DI2,
+Stop ou timeout de 60 segundos. A tabela e o contador recebem somente EPCs
+encontrados e registrados pelo Backend, com deduplicação por sessão. POSTs
+não são repetidos automaticamente em timeout. As configurações e o diagnóstico
+DI1–DI5/CH1–CH8 usam os mesmos serviços e a mesma porta serial da operação.
+CH1–CH3 ficam protegidos contra comandos manuais durante o modo automático.
+
+Sistema e o estado interno de Base de dados vêm da mesma chamada health.
+O monitor continua observando `database`; a interface apresenta somente
+Sistema, e a aptidão preserva a regra de Sistema do ADR-013.
+Configurações de conexão salvas são usadas nas próximas conexões; uma sessão
+serial já aberta mantém os parâmetros com que foi iniciada.
+
+Sem opções, os pontos de entrada e o executável Windows iniciam a operação Qt.
+`--preview` e `--configure` abrem sem hardware. A substituição final foi
+autorizada pelo usuário antes da homologação física, que continua pendente.
+Veja o [checklist](docs/validacao/RF018-homologacao-fisica.md) e o
+[relatório](docs/validacao/RF018-relatorio-operacional.md).
+
+### Distribuição Windows
+
+```powershell
+python -m pip install -e ".[build-windows]"
+python tools/build_windows.py
+python tools/verify_windows.py
+```
+
+O bundle fica em `dist/DSV-RFID`; distribua a pasta inteira. QML, SVG, DLLs
+e plugins Qt acompanham o executável. O `.env` real não é incorporado.
+O verificador executa somente prévia/configuração com dados fictícios em uma
+pasta separada, sem Python no PATH, e grava capturas em
+`build/rf018-distribution-smoke`. Para operação com equipamentos preparados:
+
+```powershell
+.\dist\DSV-RFID\DSV-RFID.exe --env-file C:\RFID\estacao.env
+```
 
 ## Qualidade e testes
 

@@ -166,8 +166,8 @@ class ReaderConfigurationService:
         self,
         settings: Settings,
         store: ReaderConfigurationStore,
-        reader: ReaderConnectionConfigurer,
-        temporary_reader_factory: TemporaryReaderFactory,
+        reader: ReaderConnectionConfigurer | None,
+        temporary_reader_factory: TemporaryReaderFactory | None,
         inventory_is_active: Callable[[], bool],
         listener: ReaderConfigurationListener,
     ) -> None:
@@ -208,11 +208,8 @@ class ReaderConfigurationService:
 
         with self._lock:
             self._settings = self._settings.with_reader_connection(connection)
-        self._reader.configure_connection(
-            connection.host,
-            connection.port,
-            connection.name,
-        )
+        if self._reader is not None:
+            self._reader.configure_connection(connection.host, connection.port, connection.name)
         LOGGER.info(
             "reader_configuration_saved reader_id=%s reader_host=%s reader_port=%s",
             connection.name,
@@ -232,6 +229,11 @@ class ReaderConfigurationService:
     def test_connection(self, name: str, host: str, port: str) -> bool:
         """Inicia um teste temporário sem bloquear ou persistir o formulário."""
 
+        if self._temporary_reader_factory is None:
+            self._emit_error(
+                ReaderConfigurationAction.TEST, "Teste RFID não integrado nesta etapa."
+            )
+            return False
         try:
             connection = validate_reader_connection(name, host, port)
         except ReaderConfigurationValidationError as error:
@@ -269,6 +271,8 @@ class ReaderConfigurationService:
         outcome = ReaderConfigurationOutcome.ERROR
         message = TEST_FAILURE_MESSAGE
         try:
+            if self._temporary_reader_factory is None:
+                raise ReaderConnectionError("Teste RFID não integrado nesta etapa.")
             temporary_reader = self._temporary_reader_factory(connection)
             temporary_reader.connect()
             if temporary_reader.is_connected():

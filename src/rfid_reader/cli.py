@@ -9,16 +9,7 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
-from rfid_reader.application import ApplicationError, run_application
 from rfid_reader.config import ConfigurationError, Settings, load_config
-
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rfid-reader")
-    subcommands = parser.add_subparsers(dest="command", required=True)
-    subcommands.add_parser("check-config", help="valida a configuração local")
-    subcommands.add_parser("show", help="abre a tela principal")
-    return parser
 
 
 def _print_summary(settings: Settings) -> None:
@@ -30,15 +21,17 @@ def _print_summary(settings: Settings) -> None:
     print(f"Log level: {settings.log_level}")
 
 
-def main(
-    argv: Sequence[str] | None = None,
-    environment: Mapping[str, str] | None = None,
-    configuration_path: Path | None = None,
+def _check_config(
+    argv: Sequence[str],
+    environment: Mapping[str, str] | None,
+    configuration_path: Path | None,
 ) -> int:
-    """Executa a CLI e retorna um código de saída."""
-
-    arguments = _parser().parse_args(argv)
-    path = configuration_path
+    parser = argparse.ArgumentParser(prog="rfid-reader check-config")
+    parser.add_argument(
+        "--env-file", type=Path, help="Arquivo .env a validar, sem conectar serviços."
+    )
+    arguments = parser.parse_args(argv)
+    path = arguments.env_file or configuration_path
     if path is None:
         if environment is None:
             discovered = find_dotenv(usecwd=True)
@@ -53,17 +46,25 @@ def main(
         print(f"Erro de configuração: {error}", file=sys.stderr)
         return 2
 
-    if arguments.command == "check-config":
-        _print_summary(settings)
-        return 0
-    if arguments.command == "show":
-        try:
-            run_application(settings, path)
-        except ApplicationError as error:
-            print(f"Erro ao iniciar aplicação: {error}", file=sys.stderr)
-            return 1
-        return 0
-    return 1
+    _print_summary(settings)
+    return 0
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    environment: Mapping[str, str] | None = None,
+    configuration_path: Path | None = None,
+) -> int:
+    """Abre a operação Qt por padrão; check-config permanece sem UI ou rede."""
+
+    options = list(sys.argv[1:] if argv is None else argv)
+    if options and options[0] == "check-config":
+        return _check_config(options[1:], environment, configuration_path)
+    if options and options[0] == "show":
+        options = options[1:]
+    from rfid_reader.cli_qt import main as qt_main
+
+    return qt_main(options, environment, configuration_path)
 
 
 def run() -> None:

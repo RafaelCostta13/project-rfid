@@ -61,6 +61,7 @@ class AutomaticInventoryController:
         self._statuses = {kind: ConnectionStatus.CHECKING for kind in ConnectionKind}
         self._backend_observed = False
         self._enabled = False
+        self._closed = False
         self._previous: tuple[bool, bool] | None = None
         self._armed = False
         self._active = False
@@ -113,7 +114,8 @@ class AutomaticInventoryController:
     def enable(self) -> bool:
         with self._lock:
             if (
-                self._enabled
+                self._closed
+                or self._enabled
                 or not self._is_ready()
                 or self._inventory.status is not InventoryStatus.STOPPED
             ):
@@ -163,6 +165,13 @@ class AutomaticInventoryController:
         except Exception:
             LOGGER.exception("automatic_mode_listener_failed enabled=%s", enabled)
 
+    def close(self) -> None:
+        """Impede que um comando concorrente habilite novos ciclos no encerramento."""
+
+        with self._lock:
+            self._closed = True
+        self.disable()
+
     def _finish(self, reason: str) -> bool:
         self._generation += 1
         if self._timer is not None:
@@ -187,6 +196,8 @@ class AutomaticInventoryController:
     def update(self, inputs: tuple[bool, ...], set_relay: Callable[[int, bool], bool]) -> None:
         """Consome uma amostra e confirma relés sem tocar em CH4–CH8."""
         with self._lock:
+            if self._closed:
+                return
             if len(inputs) < 2:
                 raise WaveshareConnectionError("Amostra sem DI1/DI2.")
             entry_clear, exit_clear = inputs[:2]

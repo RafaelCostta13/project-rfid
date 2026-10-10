@@ -71,9 +71,9 @@ class ManualInventoryService:
             self._emit(InventoryStatusChanged(status))
             return False
 
+        self._emit(InventoryCleared())
         with self._lock:
             self._accept_tags = True
-        self._emit(InventoryCleared())
         self._emit(InventoryStatusChanged(InventoryStatus.READING))
         return True
 
@@ -120,6 +120,17 @@ class ManualInventoryService:
             self._listener(event)
         except Exception:
             LOGGER.exception("manual_inventory_listener_failed")
+
+    def connection_recovered(self) -> None:
+        """Libera um novo ciclo após uma sessão LLRP novamente confirmada."""
+
+        with self._lock:
+            if self._closed or self._status is not InventoryStatus.ERROR:
+                return
+            if not self._reader.is_connected():
+                return
+            self._status = InventoryStatus.STOPPED
+        self._emit(InventoryStatusChanged(InventoryStatus.STOPPED))
 
     def close(self) -> None:
         """Interrompe o inventário e encerra a única sessão do reader."""

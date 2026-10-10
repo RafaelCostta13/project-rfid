@@ -10,6 +10,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from rfid_reader.domain import RfidReadResult
+
 
 class BackendClientError(RuntimeError):
     """Falha de rede, HTTP ou contrato do Backend."""
@@ -18,6 +20,7 @@ class BackendClientError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class BackendHealth:
     system_ok: bool
+    database_ok: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +105,10 @@ class BackendRFIDClient:
         status = document.get("status")
         if not isinstance(status, str):
             raise BackendClientError("resposta health inválida")
-        return BackendHealth(status == "ok")
+        database = document.get("database")
+        return BackendHealth(
+            status == "ok", database == "ok" if isinstance(database, str) else None
+        )
 
     def get_rfid_record(self, epc: str) -> RfidRecordData | None:
         """Consulta um EPC sem registrar passagem ou alterar o Backend."""
@@ -138,6 +144,40 @@ class BackendRFIDClient:
         if not isinstance(raw_data, dict):
             raise BackendClientError("resposta EPC inválida: data")
         return self._record_from_data(raw_data, normalized_epc)
+
+    def create_rfid_read(self, epc: str) -> RfidReadResult:
+        """Registra uma passagem usando somente o EPC normalizado."""
+
+        normalized_epc = epc.strip().upper()
+        if not normalized_epc:
+            raise BackendClientError("EPC vazio")
+        if not self._base_url:
+            raise BackendClientError("URL do Backend não configurada")
+        try:
+            request = Request(
+                f"{self._base_url}/api/v1/rfid_reads",
+                data=json.dumps({"epc": normalized_epc}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+        except ValueError as error:
+            raise BackendClientError("URL do Backend inválida") from error
+        try:
+            response = self._transport(request, self._timeout_seconds)
+        except BackendClientError:
+            raise
+        except (TimeoutError, OSError) as error:
+            raise BackendClientError("falha de rede no Backend RFID") from error
+        document = self._json_document(response.body, response.status_code)
+        if response.status_code != 200:
+            error_code = document.get("error")
+            raise BackendClientError(
+                f"resposta HTTP {response.status_code} no registro de passagem"
+                + (f": {error_code}" if isinstance(error_code, str) else "")
+            )
+        if document.get("success") is not True:
+            raise BackendClientError("resposta de passagem inválida: success")
+        return self._read_result_from_document(document, normalized_epc)
 
     def _json_document(self, body: bytes, status_code: int) -> dict[str, object]:
         try:
@@ -199,4 +239,34 @@ class BackendRFIDClient:
             first_read_at=self._optional_text(data, "first_read_at"),
             last_read_at=self._optional_text(data, "last_read_at"),
             read_count=raw_read_count,
+        )
+
+    def _read_result_from_document(
+        self,
+        document: dict[str, object],
+        requested_epc: str,
+    ) -> RfidReadResult:
+        returned_epc = self._required_text(document, "epc").strip().upper()
+        if returned_epc != requested_epc:
+            raise BackendClientError("resposta de passagem inválida: EPC divergente")
+        first_read = document.get("first_read")
+        duplicate = document.get("duplicate")
+        if not isinstance(first_read, bool) or not isinstance(duplicate, bool):
+            raise BackendClientError("resposta de passagem inválida: flags")
+        raw_read_count = document.get("read_count")
+        if (
+            not isinstance(raw_read_count, int)
+            or isinstance(raw_read_count, bool)
+            or raw_read_count < 0
+        ):
+            raise BackendClientError("resposta de passagem inválida: read_count")
+        return RfidReadResult(
+            success=True,
+            epc=returned_epc,
+            first_read=first_read,
+            duplicate=duplicate,
+            status=self._required_text(document, "status"),
+            read_count=raw_read_count,
+            first_read_at=self._optional_text(document, "first_read_at"),
+            last_read_at=self._optional_text(document, "last_read_at"),
         )

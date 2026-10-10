@@ -96,6 +96,15 @@ class WaveshareDiagnosticService:
             self._manual_control = False
         self._connect_worker()
 
+    def resume_automatic(self) -> None:
+        """Entrega CH1–CH3 ao controller, usando a sessão serial já aberta."""
+
+        with self._guard:
+            self._operational = True
+            self._manual_control = False
+        self.connect_automatic()
+        self._listener(DiagnosticEvent(DiagnosticEventKind.AUTOMATIC))
+
     def probe_status(self, tester: WaveshareConnectionTester) -> ConnectionStatus:
         """Confirma resposta Modbus sem disputar uma sessão ativa."""
 
@@ -155,6 +164,8 @@ class WaveshareDiagnosticService:
     def set_relay(self, channel: int, enabled: bool) -> None:
         if channel not in range(1, 9):
             raise ValueError("Canal de relé inválido.")
+        if channel <= 3 and self._automatic is not None and self._automatic.enabled:
+            return
         if channel <= 3 and self._operational and not self._manual_control:
             return
         if self._thread is not None and self._thread.is_alive() and not self._stop.is_set():
@@ -227,6 +238,10 @@ class WaveshareDiagnosticService:
                     continue
                 if self._stop.is_set():
                     break
+                if channel <= 3 and self._automatic is not None and self._automatic.enabled:
+                    continue
+                with self._guard:
+                    automatic = self._operational and not self._manual_control
                 if automatic:
                     inputs = port.read_inputs()
                     self._listener(DiagnosticEvent(DiagnosticEventKind.INPUTS, states=inputs))

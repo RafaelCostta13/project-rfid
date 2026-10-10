@@ -364,3 +364,20 @@ def test_prevents_simultaneous_connection_tests() -> None:
     finally:
         release.set()
         service.close()
+
+
+def test_configuration_only_service_saves_without_creating_a_reader() -> None:
+    store = RecordingStore()
+    events: list[ReaderConfigurationFeedback] = []
+    service = ReaderConfigurationService(
+        application_settings(), store, None, None, lambda: False, events.append
+    )
+    try:
+        assert service.save("Reader local", "reader.local", "6000")
+        assert service.current() == ReaderConnectionSettings("Reader local", "reader.local", 6000)
+        assert store.saved == [service.current()]
+        assert not service.test_connection("Reader local", "reader.local", "6000")
+        assert events[-1].outcome is ReaderConfigurationOutcome.ERROR
+        assert "não integrado" in events[-1].message
+    finally:
+        service.close()

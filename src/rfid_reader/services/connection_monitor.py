@@ -113,6 +113,5 @@ class ConnectionMonitor:
             except Exception:
                 LOGGER.exception("connection_checker_close_failed")
         for thread in self._threads:
-            thread.join(timeout=max(1.0, self._interval_seconds))
-            if thread.is_alive():
-                LOGGER.warning("connection_monitor_thread_did_not_stop thread=%s", thread.name)
+            # Os adapters possuem timeout; aguardar também o último HTTP/LLRP evita órfãos.
+            thread.join()

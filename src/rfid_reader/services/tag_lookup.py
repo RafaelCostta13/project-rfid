@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from rfid_reader.domain import (
+    RfidReadResult,
     TagLookupChanged,
     TagLookupEvent,
     TagLookupKey,
@@ -38,6 +39,8 @@ class _LookupTask:
 class BackendLookupClient(Protocol):
     def get_rfid_record(self, epc: str) -> RfidRecordData | None: ...
 
+    def create_rfid_read(self, epc: str) -> RfidReadResult: ...
+
 
 BackendClientFactory = Callable[[], BackendLookupClient]
 
@@ -50,6 +53,8 @@ class TagLookupService:
         client_factory: BackendClientFactory,
         queue_size: int,
         listener: TagLookupListener,
+        *,
+        autostart: bool = True,
     ) -> None:
         self._client_factory = client_factory
         self._listener = listener
@@ -65,7 +70,18 @@ class TagLookupService:
             name="tag-lookup-worker",
             daemon=True,
         )
-        self._worker.start()
+        self._started = False
+        if autostart:
+            self.start()
+
+    def start(self) -> None:
+        """Permite que o runtime controle a inicialização do worker."""
+
+        with self._lock:
+            if self._closed or self._started:
+                return
+            self._started = True
+            self._worker.start()
 
     def start_session(self) -> int:
         """Reinicia a deduplicação e invalida resultados da sessão anterior."""
@@ -76,8 +92,11 @@ class TagLookupService:
             self._session_id += 1
             session_id = self._session_id
             self._seen.clear()
-            self._accepting = True
+            self._accepting = False
         self._emit(TagLookupSessionStarted(session_id))
+        with self._lock:
+            if not self._closed and session_id == self._session_id:
+                self._accepting = True
         return session_id
 
     def stop_accepting(self) -> None:
@@ -152,7 +171,8 @@ class TagLookupService:
             task.key.epc,
         )
         try:
-            record = self._client_factory().get_rfid_record(task.key.epc)
+            client = self._client_factory()
+            record = client.get_rfid_record(task.key.epc)
         except BackendClientError:
             LOGGER.exception("tag_lookup_backend_error epc=%s", task.key.epc)
             self._emit_error_if_current(task)
@@ -162,23 +182,32 @@ class TagLookupService:
             LOGGER.info("tag_lookup_not_found epc=%s", task.key.epc)
             return
         if not self._is_current_session(task.session_id):
+            LOGGER.debug("tag_lookup_stale_get_ignored epc=%s", task.key.epc)
+            return
+        try:
+            read_result = client.create_rfid_read(task.key.epc)
+        except BackendClientError:
+            LOGGER.exception("tag_read_registration_failed epc=%s", task.key.epc)
+            self._emit_error_if_current(task)
+            return
+        if not self._is_current_session(task.session_id):
             LOGGER.debug("tag_lookup_stale_result_ignored epc=%s", task.key.epc)
             return
         LOGGER.info(
             "tag_lookup_finished epc=%s status=%s",
             task.key.epc,
-            record.status,
+            read_result.status,
         )
         self._emit(
             TagLookupChanged(
                 task.session_id,
                 task.key,
-                self._result_from_record(record),
+                self._result_from_record(record, read_result),
             )
         )
 
     @staticmethod
-    def _result_from_record(record: RfidRecordData) -> TagLookupResult:
+    def _result_from_record(record: RfidRecordData, read_result: RfidReadResult) -> TagLookupResult:
         return TagLookupResult(
             epc=record.epc,
             status=TagLookupStatus.FOUND,
@@ -188,7 +217,12 @@ class TagLookupService:
             order_number=record.pedido,
             volume=record.volume,
             dock=record.doca,
-            record_status=record.status,
+            record_status=read_result.status,
+            first_read=read_result.first_read,
+            duplicate=read_result.duplicate,
+            read_count=read_result.read_count,
+            first_read_at=read_result.first_read_at,
+            last_read_at=read_result.last_read_at,
         )
 
     def _emit_error_if_current(self, task: _LookupTask) -> None:
@@ -228,13 +262,17 @@ class TagLookupService:
         except Exception:
             LOGGER.exception("tag_lookup_listener_failed")
 
-    def close(self) -> None:
-        """Interrompe o worker depois de aguardar a chamada corrente terminar."""
+    def begin_close(self) -> None:
+        """Invalida sessões antes de aguardar I/O, impedindo novos POSTs após GET."""
 
         with self._lock:
-            if self._closed:
-                return
             self._closed = True
             self._accepting = False
         self._stop_event.set()
-        self._worker.join()
+
+    def close(self) -> None:
+        """Interrompe o worker depois de aguardar a chamada corrente terminar."""
+
+        self.begin_close()
+        if self._started:
+            self._worker.join()

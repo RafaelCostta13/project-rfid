@@ -2,7 +2,7 @@ import threading
 
 import pytest
 
-from rfid_reader.domain import ConnectionKind, ConnectionStatus, WaveshareConnectionSettings
+from rfid_reader.domain import ConnectionStatus, WaveshareConnectionSettings
 from rfid_reader.integrations.waveshare_modbus import (
     PymodbusWaveshareConnectionTester,
     WavesharePortBusyError,
@@ -17,7 +17,6 @@ from rfid_reader.services.waveshare_diagnostic import (
     DiagnosticEventKind,
     WaveshareDiagnosticService,
 )
-from rfid_reader.ui.components import CONNECTION_NAMES, ConnectionBar
 
 
 def settings(port: str = "COM5") -> WaveshareConnectionSettings:
@@ -138,13 +137,3 @@ def test_shared_gate_rejects_temporary_probe_while_diagnostic_owns_port() -> Non
             tester.test(settings())
     finally:
         gate.release()
-
-
-def test_connection_bar_has_waveshare_with_existing_status_vocabulary() -> None:
-    assert CONNECTION_NAMES[ConnectionKind.WAVESHARE] == "Comandos"
-    assert ConnectionBar._status_text(ConnectionKind.WAVESHARE, ConnectionStatus.CONNECTED) == (
-        "● Comandos: Conectado"
-    )
-    assert ConnectionBar._status_text(ConnectionKind.WAVESHARE, ConnectionStatus.DISCONNECTED) == (
-        "● Comandos: Desconectado"
-    )

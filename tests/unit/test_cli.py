@@ -1,11 +1,13 @@
 import socket
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
-from rfid_reader import cli
 from rfid_reader.cli import main
 from rfid_reader.config import Settings
+from rfid_reader.ui.qt.mock_data import PrototypeTheme
 
 
 def valid_environment() -> dict[str, str]:
@@ -57,32 +59,68 @@ def test_check_config_does_not_access_network(monkeypatch: pytest.MonkeyPatch) -
     assert main(["check-config"], valid_environment()) == 0
 
 
-def test_show_opens_application_with_validated_settings(
+@pytest.mark.parametrize("options", [[], ["show"], ["--operate"]])
+def test_official_entrypoint_opens_qt_with_validated_settings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    options: list[str],
 ) -> None:
     received: list[tuple[Settings, Path]] = []
+    module = ModuleType("rfid_reader.ui.qt.application")
 
-    def fake_run_application(settings: Settings, path: Path) -> None:
+    def operate(settings: Settings, path: Path, theme: PrototypeTheme, **kwargs: object) -> int:
         received.append((settings, path))
+        return 0
 
-    monkeypatch.setattr(cli, "run_application", fake_run_application)
+    module.run_operational = operate
+    module.PrototypeError = RuntimeError
+    monkeypatch.setitem(sys.modules, module.__name__, module)
     configuration_path = tmp_path / ".env"
 
-    assert main(["show"], valid_environment(), configuration_path) == 0
+    assert main(options, valid_environment(), configuration_path) == 0
     assert received[0][0].reader_host == "reader.local"
     assert received[0][1] == configuration_path
 
 
-def test_show_reports_application_start_error(
+def test_official_entrypoint_reports_qt_start_error(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    def fail_to_start(settings: Settings, path: Path) -> None:
-        raise cli.ApplicationError("interface indisponível")
+    module = ModuleType("rfid_reader.ui.qt.application")
 
-    monkeypatch.setattr(cli, "run_application", fail_to_start)
+    def fail_to_start(*args: object, **kwargs: object) -> int:
+        raise RuntimeError("interface indisponível")
+
+    module.run_operational = fail_to_start
+    module.PrototypeError = RuntimeError
+    monkeypatch.setitem(sys.modules, module.__name__, module)
 
     assert main(["show"], valid_environment(), tmp_path / ".env") == 1
     assert "interface indisponível" in capsys.readouterr().err
+
+
+def test_check_config_accepts_explicit_file_without_importing_qt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setitem(sys.modules, "rfid_reader.cli_qt", None)
+    path = tmp_path / "station.env"
+    path.write_text("RFID_READER_NAME=Teste\n", encoding="utf-8")
+    assert main(["check-config", "--env-file", str(path)], valid_environment()) == 0
+
+
+def test_official_cli_forwards_preview_without_operational_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = ModuleType("rfid_reader.ui.qt.application")
+    received: list[object] = []
+
+    def preview(*args: object, **kwargs: object) -> int:
+        received.append(args)
+        return 0
+
+    module.run_prototype = preview
+    module.PrototypeError = RuntimeError
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    assert main(["--preview"], {"RFID_READER_PORT": "invalid"}) == 0
+    assert len(received) == 1

@@ -29,6 +29,8 @@ class BackendConfigurationService:
         self._timeout_seconds = settings.connection_timeout_seconds
         self._lock = threading.Lock()
         self._testing = False
+        self._closed = False
+        self._test_thread: threading.Thread | None = None
 
     def current(self) -> str:
         with self._lock:
@@ -48,7 +50,7 @@ class BackendConfigurationService:
     def test_connection(self, base_url: str, listener: Callable[[str], None]) -> bool:
         value = base_url.strip()
         with self._lock:
-            if self._testing:
+            if self._testing or self._closed:
                 return False
             self._testing = True
         listener(TEST_IN_PROGRESS)
@@ -64,8 +66,24 @@ class BackendConfigurationService:
                 with self._lock:
                     self._testing = False
 
-        threading.Thread(target=run, name="backend-configuration-test", daemon=True).start()
+        with self._lock:
+            if self._closed:
+                self._testing = False
+                return False
+            self._test_thread = threading.Thread(
+                target=run, name="backend-configuration-test", daemon=True
+            )
+            self._test_thread.start()
         return True
+
+    def close(self) -> None:
+        """Aguarda o teste de conexão já iniciado, sem criar novos workers."""
+
+        with self._lock:
+            self._closed = True
+            thread = self._test_thread
+        if thread is not None:
+            thread.join()
 
 
 def _dotenv_value(value: str) -> str:
@@ -74,24 +92,38 @@ def _dotenv_value(value: str) -> str:
 
 
 class BackendHealthChecker:
-    def __init__(self, client_factory: Callable[[], BackendRFIDClient]) -> None:
+    def __init__(
+        self, client_factory: Callable[[], BackendRFIDClient], *, include_database: bool = False
+    ) -> None:
         self._client_factory = client_factory
         self._closed = threading.Event()
+        self._include_database = include_database
 
     def check(self) -> Mapping[ConnectionKind, ConnectionStatus]:
         if self._closed.is_set():
             status = ConnectionStatus.DISCONNECTED
-            return {ConnectionKind.SYSTEM: status}
+            return self._unavailable(status)
         try:
             health = self._client_factory().health()
         except BackendClientError:
             LOGGER.warning("backend_health_unavailable", exc_info=True)
-            return {ConnectionKind.SYSTEM: ConnectionStatus.ERROR}
-        return {
+            return self._unavailable(ConnectionStatus.ERROR)
+        result = {
             ConnectionKind.SYSTEM: (
                 ConnectionStatus.CONNECTED if health.system_ok else ConnectionStatus.ERROR
             )
         }
+        if self._include_database:
+            result[ConnectionKind.DATABASE] = (
+                ConnectionStatus.CONNECTED if health.database_ok is True else ConnectionStatus.ERROR
+            )
+        return result
+
+    def _unavailable(self, status: ConnectionStatus) -> Mapping[ConnectionKind, ConnectionStatus]:
+        result = {ConnectionKind.SYSTEM: status}
+        if self._include_database:
+            result[ConnectionKind.DATABASE] = status
+        return result
 
     def close(self) -> None:
         self._closed.set()

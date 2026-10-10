@@ -168,7 +168,7 @@ class WaveshareConfigurationService:
         self,
         settings: Settings,
         store: WaveshareConfigurationStore,
-        tester: WaveshareConnectionTester,
+        tester: WaveshareConnectionTester | None,
         listener: WaveshareConfigurationListener,
     ) -> None:
         self._settings = settings
@@ -247,6 +247,11 @@ class WaveshareConfigurationService:
     ) -> bool:
         """Inicia uma leitura Modbus temporária sem bloquear nem persistir."""
 
+        if self._tester is None:
+            self._emit_error(
+                WaveshareConfigurationAction.TEST, "Teste Waveshare não integrado nesta etapa."
+            )
+            return False
         try:
             connection = validate_waveshare_connection(
                 serial_port,
@@ -287,6 +292,8 @@ class WaveshareConfigurationService:
         outcome = WaveshareConfigurationOutcome.ERROR
         message = TEST_FAILURE_MESSAGE
         try:
+            if self._tester is None:
+                return
             self._tester.test(connection)
             outcome = WaveshareConfigurationOutcome.SUCCESS
             message = TEST_SUCCESS_MESSAGE
