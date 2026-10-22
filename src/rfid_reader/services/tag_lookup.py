@@ -180,6 +180,13 @@ class TagLookupService:
 
         if record is None:
             LOGGER.info("tag_lookup_not_found epc=%s", task.key.epc)
+            if self._is_current_session(task.session_id):
+                self._emit_changed(
+                    task.session_id,
+                    task.key,
+                    TagLookupStatus.NOT_FOUND,
+                    "Etiqueta não encontrada no Backend RFID.",
+                )
             return
         if not self._is_current_session(task.session_id):
             LOGGER.debug("tag_lookup_stale_get_ignored epc=%s", task.key.epc)

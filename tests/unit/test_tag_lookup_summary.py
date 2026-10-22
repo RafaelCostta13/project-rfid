@@ -16,11 +16,25 @@ def test_summary_accepts_only_found_results() -> None:
 
     assert summary.update(result("EPC-FOUND-01", TagLookupStatus.FOUND))
     assert summary.update(result("EPC-FOUND-02", TagLookupStatus.FOUND))
-    assert not summary.update(result("EPC-NOT-FOUND", TagLookupStatus.NOT_FOUND))
+    assert summary.update(result("EPC-NOT-FOUND", TagLookupStatus.NOT_FOUND))
     assert not summary.update(result("EPC-CONSULTING", TagLookupStatus.CONSULTING))
     assert not summary.update(result("EPC-ERROR", TagLookupStatus.ERROR))
 
     assert summary.total == 2
+    assert summary.extra_box_total == 1
+
+
+def test_summary_counts_distinct_extra_box_epcs_and_resets_with_session() -> None:
+    summary = TagLookupSessionSummary()
+
+    assert summary.update(result("EPC-A", TagLookupStatus.NOT_FOUND))
+    assert not summary.update(result("EPC-A", TagLookupStatus.NOT_FOUND))
+    assert summary.update(result("EPC-B", TagLookupStatus.NOT_FOUND))
+    assert summary.extra_box_total == 2
+
+    summary.reset()
+
+    assert summary.extra_box_total == 0
 
 
 def test_repeated_found_result_for_same_epc_does_not_duplicate_count() -> None:

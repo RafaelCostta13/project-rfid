@@ -66,6 +66,7 @@ class ConnectionBridge(QObject):
         constant=True,
     )
     foundCount = Property(int, lambda self: 0, constant=True)
+    extraBoxCount = Property(int, lambda self: 0, constant=True)
     startEnabled = Property(bool, lambda self: False, constant=True)
     stopEnabled = Property(bool, lambda self: False, constant=True)
 

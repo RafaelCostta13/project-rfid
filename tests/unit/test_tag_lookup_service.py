@@ -190,9 +190,10 @@ def test_not_found_does_not_execute_post(tmp_path: Path) -> None:
     try:
         service.start_session()
         assert service.submit(tag(EPC_MISSING))
-        time.sleep(0.1)
+        wait_until(lambda: len(completed(events, EPC_MISSING)) == 1)
         assert client.get_requests == [EPC_MISSING]
         assert client.post_requests == []
+        assert completed(events, EPC_MISSING)[0].result.status is TagLookupStatus.NOT_FOUND
     finally:
         service.close()
 
@@ -353,9 +354,17 @@ def test_epc_missing_other_dock_or_inactive_is_ignored_without_error(tmp_path: P
         assert service.submit(tag(EPC_INACTIVE))
         time.sleep(0.1)
 
-        assert completed(events, EPC_MISSING) == []
-        assert completed(events, EPC_OTHER_DOCK) == []
-        assert completed(events, EPC_INACTIVE) == []
+        wait_until(
+            lambda: (
+                len(completed(events, EPC_MISSING)) == 1
+                and len(completed(events, EPC_OTHER_DOCK)) == 1
+                and len(completed(events, EPC_INACTIVE)) == 1
+            )
+        )
+        assert all(
+            completed(events, epc)[0].result.status is TagLookupStatus.NOT_FOUND
+            for epc in (EPC_MISSING, EPC_OTHER_DOCK, EPC_INACTIVE)
+        )
     finally:
         service.close()
 

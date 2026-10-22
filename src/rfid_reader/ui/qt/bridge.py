@@ -85,6 +85,7 @@ class PrototypeBridge(QObject):
     operationDescription = Property(str, _get_description, notify=changed)
     connections = Property(list, _get_connections, notify=changed)
     foundCount = Property(int, _get_count, notify=changed)
+    extraBoxCount = Property(int, lambda self: 0, notify=changed)
     tagModel = Property(QObject, _get_model, constant=True)
     startEnabled = Property(bool, _get_start_enabled, notify=changed)
     stopEnabled = Property(bool, _get_stop_enabled, notify=changed)

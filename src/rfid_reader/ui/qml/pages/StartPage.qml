@@ -20,7 +20,23 @@ ScrollView {
             color: Theme.mutedText
             Layout.fillWidth: true
         }
-        MetricCard { Layout.fillWidth: true; count: page.uiBridge.foundCount }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacing
+            MetricCard {
+                Layout.fillWidth: true
+                count: page.uiBridge.foundCount
+                title: "EPCs encontrados"
+                accentColor: Theme.success
+            }
+            MetricCard {
+                Layout.fillWidth: true
+                count: page.uiBridge.extraBoxCount
+                title: "Extra box"
+                accentColor: Theme.warning
+                countObjectName: "extraBoxCount"
+            }
+        }
         Rectangle {
             color: Theme.surface
             radius: Theme.radius

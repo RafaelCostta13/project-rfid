@@ -164,6 +164,7 @@ def test_get_failure_or_missing_epc_never_posts_or_counts(rig: Rig, status: int 
     wait_for(lambda: rig.backend.count("GET") == 1)
     QTest.qWait(50)
     assert rig.backend.count("POST") == rig.bridge.foundCount == 0
+    assert rig.bridge.extraBoxCount == (1 if status == 404 else 0)
     rig.reader.emit()
     QTest.qWait(20)
     assert rig.backend.count("GET") == 1
@@ -171,6 +172,23 @@ def test_get_failure_or_missing_epc_never_posts_or_counts(rig: Rig, status: int 
         wait_for(lambda: "consultar" in rig.bridge.operationDescription)
     else:
         assert "consultar" not in rig.bridge.operationDescription
+
+
+def test_extra_box_count_deduplicates_and_resets_per_session(rig: Rig) -> None:
+    rig.backend.get_status = 404
+    rig.start_cycle()
+    for _ in range(10):
+        rig.reader.emit()
+    wait_for(lambda: rig.bridge.extraBoxCount == 1)
+    assert rig.bridge.foundCount == 0
+    assert rig.backend.count("POST") == 0
+
+    rig.end_cycle()
+    rig.start_cycle()
+    assert rig.bridge.extraBoxCount == 0
+    rig.reader.emit()
+    wait_for(lambda: rig.bridge.extraBoxCount == 1)
+    assert rig.backend.count("POST") == 0
 
 
 @pytest.mark.parametrize("status", [500, "timeout"])
@@ -435,6 +453,7 @@ def test_qml_operational_buttons_diagnostic_and_configuration(rig: Rig) -> None:
         rig.reader.emit()
         wait_for(lambda: rig.bridge.foundCount == 1)
         assert window.findChild(QObject, "foundCount").property("text") == "1"
+        assert window.findChild(QObject, "extraBoxCount").property("text") == "0"
         window.findChild(QObject, "settingsNavigation").clicked.emit()
         window.findChild(QObject, "diagnosticButton").clicked.emit()
         assert window.property("currentPage") == "diagnostic"

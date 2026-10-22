@@ -45,17 +45,22 @@ class TagLookupResult:
 
 @dataclass(slots=True)
 class TagLookupSessionSummary:
-    """Mantém os resultados encontrados por EPC técnico na sessão atual."""
+    """Mantém os totais distintos confirmados na sessão atual."""
 
     _found_results: dict[str, TagLookupResult] = field(
         default_factory=dict,
         init=False,
         repr=False,
     )
+    _extra_box_epcs: set[str] = field(default_factory=set, init=False, repr=False)
 
     def update(self, result: TagLookupResult) -> bool:
-        """Registra somente confirmações da base e informa se devem ser exibidas."""
+        """Registra confirmações da base e informa se um total foi incrementado."""
 
+        if result.status is TagLookupStatus.NOT_FOUND:
+            before = len(self._extra_box_epcs)
+            self._extra_box_epcs.add(result.epc)
+            return len(self._extra_box_epcs) > before
         if result.status is not TagLookupStatus.FOUND:
             return False
         self._found_results[result.epc] = result
@@ -65,12 +70,19 @@ class TagLookupSessionSummary:
         """Descarta os resultados pertencentes à sessão anterior."""
 
         self._found_results.clear()
+        self._extra_box_epcs.clear()
 
     @property
     def total(self) -> int:
         """Retorna o total de EPCs distintos confirmados pela base."""
 
         return len(self._found_results)
+
+    @property
+    def extra_box_total(self) -> int:
+        """Retorna o total de EPCs distintos confirmados como inexistentes."""
+
+        return len(self._extra_box_epcs)
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,6 +9,7 @@ from rfid_reader.domain import (
     InventoryStatusChanged,
     TagLookupChanged,
     TagLookupSessionStarted,
+    TagLookupSessionSummary,
     TagLookupStatus,
 )
 from rfid_reader.runtime import ApplicationRuntime, CommandFinished, RuntimeEvent
@@ -29,6 +30,7 @@ class OperationalBridge(QObject):
         self._closed = False
         self._states: dict[ConnectionKind, ConnectionStatus] = {}
         self._model = TagTableModel(self)
+        self._summary = TagLookupSessionSummary()
         self.runtime = runtime
         self._inventory = runtime.inventory.status
         self._automatic = runtime.automatic.enabled
@@ -116,6 +118,7 @@ class OperationalBridge(QObject):
     operationTitle = Property(str, _operation_title, notify=changed)
     operationDescription = Property(str, _operation_description, notify=changed)
     foundCount = Property(int, lambda self: self._model.rowCount(), notify=changed)
+    extraBoxCount = Property(int, lambda self: self._summary.extra_box_total, notify=changed)
     startEnabled = Property(
         bool,
         lambda self: (
@@ -154,11 +157,13 @@ class OperationalBridge(QObject):
             self._automatic = value
         elif isinstance(value, TagLookupSessionStarted):
             self._session_id = value.session_id
+            self._summary.reset()
             self._model.start_session(value.session_id)
             self._message = ""
         elif isinstance(value, TagLookupChanged):
             if value.session_id != self._session_id:
                 return
+            self._summary.update(value.result)
             self._model.upsert(value.result, value.session_id)
             if value.result.status is TagLookupStatus.ERROR:
                 self._message = value.result.message
