@@ -9,7 +9,14 @@ from PySide6.QtTest import QAbstractItemModelTester, QSignalSpy
 
 from rfid_reader.domain import TagLookupStatus
 from rfid_reader.ui.qt.mock_data import MOCK_RECORDS
-from rfid_reader.ui.qt.models import CELL_ROLE, STATUS_ROLE, TagTableModel
+from rfid_reader.ui.qt.models import (
+    CELL_ROLE,
+    EPC_ROLE,
+    EXTRA_BOX_REASON_ROLE,
+    EXTRA_BOX_ROLE,
+    STATUS_ROLE,
+    TagTableModel,
+)
 
 
 def test_six_columns_preserve_strings_and_internal_epc(qt_application: object) -> None:
@@ -56,7 +63,6 @@ def test_insert_update_and_unchanged_result_are_incremental(qt_application: obje
 @pytest.mark.parametrize(
     "status",
     [
-        TagLookupStatus.NOT_FOUND,
         TagLookupStatus.ERROR,
         TagLookupStatus.CONSULTING,
         TagLookupStatus.WAITING,
@@ -67,6 +73,45 @@ def test_only_found_records_are_visible(status: TagLookupStatus, qt_application:
     model.start_session(1)
     assert not model.upsert(replace(MOCK_RECORDS[0], status=status), 1)
     assert model.rowCount() == 0
+
+
+def test_extra_box_records_are_visible_with_safe_placeholders(qt_application: object) -> None:
+    model = TagTableModel()
+    model.start_session(1)
+    extra = replace(
+        MOCK_RECORDS[0],
+        status=TagLookupStatus.NOT_FOUND,
+        customer="",
+        invoice_number="",
+        volume="",
+        order_number="",
+        dock="",
+    )
+    assert model.upsert(extra, 1)
+    assert model.rowCount() == 1
+    assert [model.data(model.index(0, column)) for column in range(6)] == [
+        "Extra box",
+        "—",
+        "—",
+        "—",
+        "—",
+        "—",
+    ]
+    assert model.data(model.index(0, 0), EXTRA_BOX_ROLE) is True
+    assert model.data(model.index(0, 0), EPC_ROLE) == extra.epc
+    assert model.data(model.index(0, 0), EXTRA_BOX_REASON_ROLE) == "Não cadastrado"
+
+
+def test_repeated_extra_box_updates_one_row_and_preserves_data(qt_application: object) -> None:
+    model = TagTableModel()
+    model.start_session(1)
+    extra = replace(MOCK_RECORDS[0], status=TagLookupStatus.EXTRA_BOX, record_status="lido")
+    assert model.upsert(extra, 1)
+    assert model.upsert(extra, 1)
+    updated = replace(extra, customer="Cliente extra")
+    assert model.upsert(updated, 1)
+    assert model.rowCount() == 1
+    assert model.data(model.index(0, 1)) == "Cliente extra"
 
 
 def test_session_reset_rejects_late_results(qt_application: object) -> None:

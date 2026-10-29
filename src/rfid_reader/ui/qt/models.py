@@ -25,8 +25,13 @@ CELL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 STATUS_ROLE = CELL_ROLE + 1
 
 
+EXTRA_BOX_ROLE = STATUS_ROLE + 1
+EPC_ROLE = EXTRA_BOX_ROLE + 1
+EXTRA_BOX_REASON_ROLE = EPC_ROLE + 1
+
+
 class TagTableModel(QAbstractTableModel):
-    """Somente resultados encontrados; EPC é chave interna, não coluna visual."""
+    """Projeta resultados encontrados e Extra Box sem duplicar EPCs."""
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -45,6 +50,9 @@ class TagTableModel(QAbstractTableModel):
             int(Qt.ItemDataRole.DisplayRole): QByteArray(b"display"),
             CELL_ROLE: QByteArray(b"cellText"),
             STATUS_ROLE: QByteArray(b"rowStatus"),
+            EXTRA_BOX_ROLE: QByteArray(b"isExtraBox"),
+            EPC_ROLE: QByteArray(b"epc"),
+            EXTRA_BOX_REASON_ROLE: QByteArray(b"extraBoxReason"),
         }
 
     def _get_column_titles(self) -> list[str]:
@@ -52,25 +60,48 @@ class TagTableModel(QAbstractTableModel):
 
     columnTitles = Property(list, _get_column_titles, constant=True)
 
-    def data(self, index: Index, role: int = int(Qt.ItemDataRole.DisplayRole)) -> str | None:
+    def data(self, index: Index, role: int = int(Qt.ItemDataRole.DisplayRole)) -> str | bool | None:
         if not index.isValid() or not (0 <= index.row() < len(self._records)):
             return None
         if not 0 <= index.column() < len(COLUMNS):
             return None
         result = self._records[index.row()]
+        is_extra_box = self._is_extra_box(result)
         if role == STATUS_ROLE:
-            return result.record_status or result.status.value
+            return "Extra box" if is_extra_box else result.record_status or result.status.value
+        if role == EXTRA_BOX_ROLE:
+            return is_extra_box
+        if role == EPC_ROLE:
+            return result.epc
+        if role == EXTRA_BOX_REASON_ROLE:
+            return self._extra_box_reason(result)
         if role not in (int(Qt.ItemDataRole.DisplayRole), CELL_ROLE):
             return None
         values = (
-            result.record_status or result.status.value,
-            result.customer,
-            result.invoice_number,
-            result.volume,
-            result.order_number,
-            result.dock,
+            "Extra box" if is_extra_box else result.record_status or result.status.value,
+            self._display_value(result.customer, is_extra_box),
+            self._display_value(result.invoice_number, is_extra_box),
+            self._display_value(result.volume, is_extra_box),
+            self._display_value(result.order_number, is_extra_box),
+            self._display_value(result.dock, is_extra_box),
         )
         return values[index.column()]
+
+    @staticmethod
+    def _is_extra_box(result: TagLookupResult) -> bool:
+        return result.status in (TagLookupStatus.EXTRA_BOX, TagLookupStatus.NOT_FOUND)
+
+    @staticmethod
+    def _extra_box_reason(result: TagLookupResult) -> str:
+        if result.status is TagLookupStatus.NOT_FOUND:
+            return "Não cadastrado"
+        if result.status is TagLookupStatus.EXTRA_BOX:
+            return "Já lido"
+        return ""
+
+    @staticmethod
+    def _display_value(value: str, is_extra_box: bool) -> str:
+        return value if value else "—" if is_extra_box else value
 
     def headerData(
         self,
@@ -96,7 +127,10 @@ class TagTableModel(QAbstractTableModel):
     def upsert(self, result: TagLookupResult, session_id: int) -> bool:
         """Projeta dados já aceitos; nunca executa GET, POST ou validação de hardware."""
 
-        if session_id != self._session_id or result.status is not TagLookupStatus.FOUND:
+        if session_id != self._session_id or (
+            result.status
+            not in (TagLookupStatus.FOUND, TagLookupStatus.EXTRA_BOX, TagLookupStatus.NOT_FOUND)
+        ):
             return False
         row = self._rows.get(result.epc)
         if row is None:

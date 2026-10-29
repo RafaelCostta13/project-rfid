@@ -89,10 +89,12 @@ class LocalCompatibilityClient:
         repository: LocalTagRepository,
         dock: str,
         post_error: Exception | None = None,
+        read_count: int = 0,
     ) -> None:
         self._repository = repository
         self._dock = dock
         self._post_error = post_error
+        self._read_count = read_count
         self.get_requests: list[str] = []
         self.post_requests: list[str] = []
 
@@ -121,7 +123,7 @@ class LocalCompatibilityClient:
             status="pendente",
             first_read_at=None,
             last_read_at=None,
-            read_count=0,
+            read_count=self._read_count,
         )
 
     def create_rfid_read(self, epc: str) -> RfidReadResult:
@@ -179,6 +181,25 @@ def test_found_epc_executes_one_get_and_one_post_in_session(tmp_path: Path) -> N
         assert client.get_requests == [EPC_01]
         assert client.post_requests == [EPC_01]
         assert completed(events, EPC_01)[0].result.record_status == "lido"
+    finally:
+        service.close()
+
+
+def test_previously_read_epc_is_extra_box_and_still_executes_post(
+    tmp_path: Path,
+) -> None:
+    events: list[TagLookupEvent] = []
+    client = LocalCompatibilityClient(repository(tmp_path), "D01", read_count=1)
+    service = TagLookupService(lambda: client, 10, events.append)
+    try:
+        service.start_session()
+        assert service.submit(tag(EPC_01))
+        wait_until(lambda: len(completed(events, EPC_01)) == 1)
+
+        result = completed(events, EPC_01)[0].result
+        assert result.status is TagLookupStatus.EXTRA_BOX
+        assert client.get_requests == [EPC_01]
+        assert client.post_requests == [EPC_01]
     finally:
         service.close()
 

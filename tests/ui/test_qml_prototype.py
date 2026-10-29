@@ -168,6 +168,46 @@ def test_theme_popup_supports_keyboard_without_qml_errors(qt_application: object
         qInstallMessageHandler(old_handler)
 
 
+def test_sidebar_collapses_without_recreating_navigation_or_theme(
+    qt_application: object,
+) -> None:
+    bridge = PrototypeBridge()
+    engine, window = create_engine(bridge)
+    try:
+        window.show()
+        QTest.qWait(60)
+        sidebar = window.findChild(QQuickItem, "appSidebar")
+        toggle = window.findChild(QObject, "sidebarToggle")
+        start = window.findChild(QObject, "startNavigation")
+        theme = window.findChild(QObject, "themeSelector")
+        assert sidebar is not None
+        assert toggle is not None
+        assert start is not None
+        assert theme is not None
+        assert sidebar.width() == 208
+        assert not start.property("iconOnly")
+        toggle.clicked.emit()
+        QTest.qWait(220)
+        assert sidebar.width() == 72
+        assert start.property("iconOnly")
+        assert not theme.property("visible")
+        assert window.findChild(QObject, "themeButton").property("visible")
+        toggle.clicked.emit()
+        QTest.qWait(220)
+        assert sidebar.width() == 208
+        assert not start.property("iconOnly")
+    finally:
+        window.close()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_sidebar_does_not_render_operational_banner() -> None:
+    sidebar_source = (QML_PATH.parent / "components" / "AppSidebar.qml").read_text(encoding="utf-8")
+    assert "bannerText" not in sidebar_source
+    assert "OPERAÇÃO RFID" not in sidebar_source
+
+
 def test_qml_source_has_no_network_or_hardware_calls() -> None:
     for path in QML_PATH.parent.rglob("*.qml"):
         source = path.read_text(encoding="utf-8")

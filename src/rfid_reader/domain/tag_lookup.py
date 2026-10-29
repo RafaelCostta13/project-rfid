@@ -10,6 +10,7 @@ class TagLookupStatus(StrEnum):
     WAITING = "Aguardando consulta"
     CONSULTING = "Consultando"
     FOUND = "Encontrada"
+    EXTRA_BOX = "Extra Box"
     NOT_FOUND = "Não encontrado"
     ERROR = "Erro"
 
@@ -57,7 +58,7 @@ class TagLookupSessionSummary:
     def update(self, result: TagLookupResult) -> bool:
         """Registra confirmações da base e informa se um total foi incrementado."""
 
-        if result.status is TagLookupStatus.NOT_FOUND:
+        if result.status in (TagLookupStatus.EXTRA_BOX, TagLookupStatus.NOT_FOUND):
             before = len(self._extra_box_epcs)
             self._extra_box_epcs.add(result.epc)
             return len(self._extra_box_epcs) > before

@@ -4,22 +4,12 @@ import QtQuick.Layouts
 import "../theme"
 import "../components"
 
-ScrollView {
+Item {
     id: page
     required property var uiBridge
-    clip: true
-    contentWidth: availableWidth
-
     ColumnLayout {
-        width: page.availableWidth
-        height: Math.max(page.availableHeight, 540)
-        spacing: Theme.spacing
-        AppText { text: "Start"; textStyle: "page" }
-        AppText {
-            text: "Resumo da sessão atual de leitura."
-            color: Theme.mutedText
-            Layout.fillWidth: true
-        }
+        anchors.fill: parent
+        spacing: 12
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.spacing
@@ -43,11 +33,11 @@ ScrollView {
             border.color: Theme.border
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 290
+            Layout.minimumHeight: 0
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 20
-                spacing: 14
+                spacing: 10
                 RowLayout {
                     Layout.fillWidth: true
                     AppText {
@@ -80,13 +70,6 @@ ScrollView {
                         onClicked: page.uiBridge.requestStop()
                     }
                     Item { Layout.fillWidth: true }
-                }
-                AppText {
-                    objectName: "operationDescription"
-                    text: page.uiBridge.operationDescription
-                    textStyle: "caption"
-                    color: Theme.mutedText
-                    Layout.fillWidth: true
                 }
                 AppText { text: "Etiquetas lidas"; textStyle: "caption"; color: Theme.secondaryText }
                 StyledTable {

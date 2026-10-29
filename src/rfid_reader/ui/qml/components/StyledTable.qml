@@ -66,12 +66,19 @@ Rectangle {
             required property int column
             required property string cellText
             required property string rowStatus
+            required property bool isExtraBox
+            required property string epc
+            required property string extraBoxReason
             implicitWidth: container.columnWidth(column)
             implicitHeight: Theme.rowHeight
             color: container.selectedRow === row ? Theme.primary
+                 : isExtraBox && rowHover.hovered ? Theme.extraBoxHover
+                 : isExtraBox ? Theme.extraBoxSurface
                  : row % 2 ? Theme.alternate : Theme.surface
+            HoverHandler { id: rowHover }
             AppText {
                 objectName: "tableCell"
+                visible: !isExtraBox || column !== 0
                 anchors.fill: parent
                 anchors.leftMargin: 14
                 anchors.rightMargin: 10
@@ -80,6 +87,31 @@ Rectangle {
                 verticalAlignment: Text.AlignVCenter
                 color: column === 0 ? Theme.success : Theme.text
             }
+            Column {
+                visible: isExtraBox && column === 0
+                anchors.fill: parent
+                anchors.leftMargin: 14
+                anchors.rightMargin: 10
+                anchors.topMargin: 5
+                anchors.bottomMargin: 4
+                spacing: 1
+                AppText {
+                    text: "Extra box"
+                    textStyle: "tableCell"
+                    color: Theme.extraBoxAccent
+                    width: parent.width
+                    height: 18
+                }
+                AppText {
+                    text: epc
+                    textStyle: "caption"
+                    color: Theme.secondaryText
+                    width: parent.width
+                    height: 16
+                }
+            }
+            ToolTip.visible: isExtraBox && rowHover.hovered
+            ToolTip.text: extraBoxReason === "" ? epc : extraBoxReason + " · " + epc
             TapHandler { onTapped: container.selectedRow = row }
         }
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }

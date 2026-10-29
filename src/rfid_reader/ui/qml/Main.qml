@@ -13,6 +13,7 @@ ApplicationWindow {
     property var diagnosticBridge: null
     property string initialPage: "start"
     property string currentPage: initialPage
+    property bool sidebarCollapsed: false
     width: 1366
     height: 768
     minimumWidth: 850
@@ -68,6 +69,8 @@ ApplicationWindow {
                 uiBridge: window.uiBridge
                 settingsAvailable: !!window.settingsBridge
                 currentPage: window.currentPage
+                collapsed: window.sidebarCollapsed
+                onCollapsedChanged: window.sidebarCollapsed = collapsed
                 onPageRequested: function(page) { window.navigate(page); }
                 Layout.fillHeight: true
             }

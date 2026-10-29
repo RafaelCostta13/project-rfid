@@ -24,6 +24,16 @@ def test_summary_accepts_only_found_results() -> None:
     assert summary.extra_box_total == 1
 
 
+def test_summary_counts_previously_read_epc_as_extra_box() -> None:
+    summary = TagLookupSessionSummary()
+
+    assert summary.update(result("EPC-EXTRA", TagLookupStatus.EXTRA_BOX))
+    assert not summary.update(result("EPC-EXTRA", TagLookupStatus.EXTRA_BOX))
+
+    assert summary.total == 0
+    assert summary.extra_box_total == 1
+
+
 def test_summary_counts_distinct_extra_box_epcs_and_resets_with_session() -> None:
     summary = TagLookupSessionSummary()
 

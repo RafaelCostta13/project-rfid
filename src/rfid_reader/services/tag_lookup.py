@@ -217,8 +217,12 @@ class TagLookupService:
     def _result_from_record(record: RfidRecordData, read_result: RfidReadResult) -> TagLookupResult:
         return TagLookupResult(
             epc=record.epc,
-            status=TagLookupStatus.FOUND,
-            message="Etiqueta encontrada no Backend RFID.",
+            status=(TagLookupStatus.EXTRA_BOX if record.read_count > 0 else TagLookupStatus.FOUND),
+            message=(
+                "Etiqueta já registrada anteriormente; classificada como Extra Box."
+                if record.read_count > 0
+                else "Etiqueta encontrada no Backend RFID."
+            ),
             customer=record.destinatario,
             invoice_number=record.notafiscal,
             order_number=record.pedido,

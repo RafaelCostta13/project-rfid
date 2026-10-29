@@ -117,7 +117,7 @@ class OperationalBridge(QObject):
     operationState = Property(str, _operation_state, notify=changed)
     operationTitle = Property(str, _operation_title, notify=changed)
     operationDescription = Property(str, _operation_description, notify=changed)
-    foundCount = Property(int, lambda self: self._model.rowCount(), notify=changed)
+    foundCount = Property(int, lambda self: self._summary.total, notify=changed)
     extraBoxCount = Property(int, lambda self: self._summary.extra_box_total, notify=changed)
     startEnabled = Property(
         bool,

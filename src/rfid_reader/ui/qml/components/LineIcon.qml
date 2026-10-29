@@ -34,6 +34,13 @@ Item {
                     ctx.lineTo(10 + Math.cos(angle) * 8, 10 + Math.sin(angle) * 8);
                     ctx.stroke();
                 }
+            } else if (icon.name === "chevron-left") {
+                ctx.beginPath(); ctx.moveTo(13, 4); ctx.lineTo(7, 10); ctx.lineTo(13, 16); ctx.stroke();
+            } else if (icon.name === "chevron-right") {
+                ctx.beginPath(); ctx.moveTo(7, 4); ctx.lineTo(13, 10); ctx.lineTo(7, 16); ctx.stroke();
+            } else if (icon.name === "theme") {
+                ctx.beginPath(); ctx.arc(10, 10, 7, 0, Math.PI * 2); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(10, 3); ctx.arc(10, 10, 7, -Math.PI / 2, Math.PI / 2); ctx.closePath(); ctx.stroke();
             } else {
                 ctx.strokeRect(3, 3, 5, 5); ctx.strokeRect(12, 3, 5, 5);
                 ctx.strokeRect(3, 12, 5, 5); ctx.strokeRect(12, 12, 5, 5);
