@@ -3,12 +3,6 @@ name: Build DSV RFID Windows
 on:
   workflow_dispatch:
 
-  push:
-    branches:
-      - feature/RF029-github-actions
-    paths:
-      - ".github/workflows/build-windows.yml"
-
 permissions:
   contents: read
 
