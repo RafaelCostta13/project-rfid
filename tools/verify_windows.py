@@ -37,6 +37,7 @@ def main() -> int:
     environment["QT_QPA_PLATFORM"] = "offscreen"
     environment["QT_QUICK_BACKEND"] = "software"
     environment["QT_QPA_FONTDIR"] = str(Path(environment.get("SystemRoot", "C:/Windows")) / "Fonts")
+    environment["LOCALAPPDATA"] = str(output / "localappdata")
     captures = (
         ("start.png", ["--preview"]),
         ("settings.png", ["--configure", "--page", "settings", "--env-file", str(settings)]),
@@ -53,10 +54,20 @@ def main() -> int:
             creationflags=subprocess.CREATE_NO_WINDOW,
             check=False,
         )
-        if result.returncode or result.stderr.strip():
+        unexpected_stderr = "\n".join(
+            line
+            for line in result.stderr.splitlines()
+            if "persistent_logging_configured" not in line
+        )
+        if result.returncode or unexpected_stderr:
             raise RuntimeError(f"Falha no smoke test {name}: {result.stderr}")
         if capture.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
             raise RuntimeError(f"Captura inválida: {name}")
+    log_file = Path(environment["LOCALAPPDATA"]) / "DSV-RFID" / "logs" / "rfid-system.log"
+    if not log_file.is_file() or "persistent_logging_configured" not in log_file.read_text(
+        encoding="utf-8"
+    ):
+        raise RuntimeError("O executável não criou o log persistente esperado.")
     if settings.read_text(encoding="utf-8") != content:
         raise RuntimeError("O smoke test alterou a configuração fictícia.")
     assets = bundle / "_internal" / "rfid_reader" / "ui" / "qml"

@@ -44,10 +44,12 @@ def test_qml_loads_assets_bindings_and_layout(
         assert window.findChild(QObject, "foundCount").property("text") == "5"
         assert window.findChild(QObject, "tagTable").property("rows") == 5
         assert not window.findChild(QObject, "settingsNavigation").property("enabled")
-        start = window.findChild(QQuickItem, "startButton")
-        assert start is not None
-        assert start.width() >= 140
-        assert start.height() >= 38
+        control = window.findChild(QQuickItem, "readingControl")
+        assert control is not None
+        assert control.width() >= 140
+        assert control.height() >= 38
+        assert window.findChild(QObject, "startButton") is None
+        assert window.findChild(QObject, "stopButton") is None
         assert window.grabWindow().isNull() is False
         assert not messages, "\n".join(messages)
     finally:
@@ -63,14 +65,20 @@ def test_qml_updates_scenarios_and_simulated_buttons(qt_application: object) -> 
     try:
         window.show()
         QTest.qWait(60)
-        start = window.findChild(QObject, "startButton")
-        stop = window.findChild(QObject, "stopButton")
-        start.clicked.emit()
-        assert not start.property("enabled")
-        assert stop.property("enabled")
-        stop.clicked.emit()
-        assert start.property("enabled")
-        assert not stop.property("enabled")
+        control = window.findChild(QObject, "readingControl")
+        assert control.property("text") == "Iniciar leitura"
+        assert control.property("iconName") == "play"
+        assert control.property("variant") == "success"
+        control.clicked.emit()
+        assert control.property("text") == "Parar leitura"
+        assert control.property("iconName") == "stop"
+        assert control.property("variant") == "danger"
+        control.clicked.emit()
+        assert control.property("text") == "Iniciar leitura"
+        assert control.property("enabled")
+        bridge.selectScenario("failure")
+        assert control.property("text") == "Iniciar leitura"
+        assert not control.property("enabled")
         window.findChild(QObject, "themeSelector").activated.emit(1)
         assert bridge.property("theme") == "navy"
         window.findChild(QObject, "scenarioSelector").activated.emit(1)

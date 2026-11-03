@@ -234,7 +234,7 @@ class BackendRFIDClient:
             doca=self._required_text(data, "doca"),
             epc=returned_epc,
             tag=self._optional_text(data, "tag"),
-            fornecedor=self._required_text(data, "fornecedor"),
+            fornecedor=self._optional_text(data, "fornecedor") or "",
             status=self._required_text(data, "status"),
             first_read_at=self._optional_text(data, "first_read_at"),
             last_read_at=self._optional_text(data, "last_read_at"),

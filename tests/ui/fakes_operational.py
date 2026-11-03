@@ -65,8 +65,8 @@ class Reader:
         self.reading = False
         return True
 
-    def emit(self, epc: str = EPC) -> None:
-        self.callback(TagRead(epc, "simulated", 1, datetime.now(UTC)))
+    def emit(self, epc: str = EPC, antenna_id: int = 1) -> None:
+        self.callback(TagRead(epc, "simulated", antenna_id, datetime.now(UTC)))
 
 
 class Timer:
@@ -186,6 +186,7 @@ class Backend:
                 read_count=0,
                 status="pendente",
                 destinatario="Cliente real do contrato",
+                fornecedor="Fornecedor real do contrato",
                 pedido="00042",
                 notafiscal="00123",
                 volume="2/4",

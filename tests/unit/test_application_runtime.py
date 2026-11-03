@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -16,6 +17,18 @@ from rfid_reader.runtime import (
     RuntimeEvent,
     RuntimeShutdownError,
 )
+
+
+@pytest.mark.parametrize("antennas", ["1", "1,2", "4,2,3,1"])
+def test_runtime_forwards_full_antenna_configuration(tmp_path: Path, antennas: str) -> None:
+    settings = load_config({"RFID_ANTENNAS": antennas})
+    with patch("rfid_reader.runtime.ZebraFX9600Reader", return_value=FakeReader()) as factory:
+        app = ApplicationRuntime(settings, tmp_path / ".env")
+        try:
+            assert factory.call_count == 1
+            assert factory.call_args.args[3] == settings.antennas
+        finally:
+            app.close()
 
 
 class FakeReader:

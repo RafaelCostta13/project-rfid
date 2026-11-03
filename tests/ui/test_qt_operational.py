@@ -62,6 +62,7 @@ class Rig:
             {
                 "WAVESHARE_SERIAL_PORT": "COM-SIMULADA",
                 "RFID_BACKEND_BASE_URL": "https://backend.test",
+                "RFID_EPC_FILTER_ENABLED": "false",
                 "RFID_STATUS_CHECK_INTERVAL_SECONDS": "0.01",
             }
         )
@@ -139,9 +140,10 @@ def test_full_cycle_updates_qml_table_counter_and_preserves_relays(rig: Rig) -> 
     rig.reader.emit()
     wait_for(lambda: rig.bridge.foundCount == 1)
     model = rig.bridge.tagModel
-    assert [model.data(model.index(0, column)) for column in range(6)] == [
-        "lido",
-        "Cliente real do contrato",
+    assert [model.data(model.index(0, column)) for column in range(7)] == [
+        "OK",
+        "Fornecedor real do contrato",
+        "—",
         "00123",
         "2/4",
         "00042",
@@ -162,7 +164,10 @@ def test_get_failure_or_missing_epc_never_posts_or_counts(rig: Rig, status: int 
     rig.start_cycle()
     rig.reader.emit()
     wait_for(lambda: rig.backend.count("GET") == 1)
-    QTest.qWait(50)
+    if status == 404:
+        wait_for(lambda: rig.bridge.extraBoxCount == 1)
+    else:
+        QTest.qWait(50)
     assert rig.backend.count("POST") == rig.bridge.foundCount == 0
     assert rig.bridge.extraBoxCount == (1 if status == 404 else 0)
     rig.reader.emit()
@@ -172,6 +177,30 @@ def test_get_failure_or_missing_epc_never_posts_or_counts(rig: Rig, status: int 
         wait_for(lambda: "consultar" in rig.bridge.operationDescription)
     else:
         assert "consultar" not in rig.bridge.operationDescription
+
+
+@pytest.mark.parametrize("status", [200, 404])
+def test_multiple_antennas_process_epc_once_until_new_session(rig: Rig, status: int) -> None:
+    rig.backend.get_status = status
+    rig.runtime.epc_filter_configuration.save(True, [EPC[:6]])
+    expected_found, expected_extra = (1, 0) if status == 200 else (0, 1)
+    expected_posts = 1 if status == 200 else 0
+    for session in (1, 2):
+        rig.start_cycle()
+        assert rig.bridge.foundCount == rig.bridge.extraBoxCount == 0
+        rig.reader.emit("ABCDEF123456", antenna_id=2)
+        for antenna in (1, 2) * 10:
+            rig.reader.emit(" " + EPC.lower() + " ", antenna_id=antenna)
+        wait_for(lambda: rig.bridge.foundCount + rig.bridge.extraBoxCount == 1)
+        rig.reader.emit(antenna_id=2)
+        QTest.qWait(40)
+        assert rig.bridge.foundCount == expected_found
+        assert rig.bridge.extraBoxCount == expected_extra
+        assert rig.bridge.tagModel.rowCount() == 1
+        assert rig.backend.count("GET") == session
+        assert rig.backend.count("POST") == expected_posts * session
+        rig.end_cycle()
+    assert rig.reader.connections == 1
 
 
 def test_extra_box_count_deduplicates_and_resets_per_session(rig: Rig) -> None:
@@ -305,7 +334,7 @@ def test_postgresql_health_failure_updates_system_and_preserves_readiness(rig: R
 
 
 @pytest.mark.parametrize("size", [(910, 512), (1366, 768), (1920, 1080)])
-def test_start_has_only_four_balanced_connection_indicators(
+def test_start_has_indicators_and_single_reading_control(
     rig: Rig, size: tuple[int, int], tmp_path: Path
 ) -> None:
     messages: list[str] = []
@@ -327,9 +356,17 @@ def test_start_has_only_four_balanced_connection_indicators(
         assert max(item.width() for item in items) - min(item.width() for item in items) <= 1
         assert max(item.y() for item in items) - min(item.y() for item in items) <= 1
         assert items[0].x() == pytest.approx(0, abs=1)
-        assert items[-1].x() + items[-1].width() == pytest.approx(bar.width(), abs=1)
         for left, right in zip(items, items[1:], strict=False):
             assert left.x() + left.width() < right.x()
+        control = window.findChild(QQuickItem, "readingControl")
+        assert control is not None and control.isVisible()
+        assert window.findChild(QObject, "startButton") is None
+        assert window.findChild(QObject, "stopButton") is None
+        assert control.x() > items[-1].x()
+        assert control.x() + control.width() == pytest.approx(bar.width(), abs=1)
+        assert control.property("text") == "Iniciar leitura"
+        assert control.property("iconName") == "play"
+        assert control.property("variant") == "success"
         capture = window.grabWindow()
         assert not capture.isNull() and capture.save(str(tmp_path / "start-aj01.png"))
         assert not messages, "\n".join(messages)
@@ -445,9 +482,12 @@ def test_qml_operational_buttons_diagnostic_and_configuration(rig: Rig) -> None:
     try:
         window.show()
         QTest.qWait(50)
-        assert window.findChild(QObject, "startButton").property("enabled")
-        window.findChild(QObject, "startButton").clicked.emit()
+        reading_control = window.findChild(QObject, "readingControl")
+        assert reading_control.property("enabled")
+        reading_control.clicked.emit()
         wait_for(lambda: rig.bridge.automaticEnabled)
+        assert reading_control.property("text") == "Parar leitura"
+        assert reading_control.property("enabled")
         assert rig.reader.starts == 0
         rig.start_cycle()
         rig.reader.emit()
@@ -465,8 +505,9 @@ def test_qml_operational_buttons_diagnostic_and_configuration(rig: Rig) -> None:
             wait_for(lambda channel=channel: rig.port.relays[channel - 1])
             wait_for(lambda channel=channel: rig.bridge.diagnosticRelays[channel - 1] is True)
         window.findChild(QObject, "startNavigation").clicked.emit()
-        window.findChild(QObject, "stopButton").clicked.emit()
+        reading_control.clicked.emit()
         wait_for(lambda: not rig.bridge.automaticEnabled)
+        assert reading_control.property("text") == "Iniciar leitura"
         rig.bridge.connectDiagnostic()
         QTest.qWait(50)
         rig.bridge.setRelay(8, False)

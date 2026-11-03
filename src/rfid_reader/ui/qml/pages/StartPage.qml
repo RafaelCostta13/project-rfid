@@ -51,26 +51,6 @@ Item {
                         description: page.uiBridge.operationTitle
                     }
                 }
-                RowLayout {
-                    spacing: 10
-                    ActionButton {
-                        objectName: "startButton"
-                        text: "Iniciar leitura"
-                        iconName: "play"
-                        variant: "success"
-                        enabled: page.uiBridge.startEnabled
-                        onClicked: page.uiBridge.requestStart()
-                    }
-                    ActionButton {
-                        objectName: "stopButton"
-                        text: "Parar leitura"
-                        iconName: "stop"
-                        variant: "danger"
-                        enabled: page.uiBridge.stopEnabled
-                        onClicked: page.uiBridge.requestStop()
-                    }
-                    Item { Layout.fillWidth: true }
-                }
                 AppText { text: "Etiquetas lidas"; textStyle: "caption"; color: Theme.secondaryText }
                 StyledTable {
                     tableModel: page.uiBridge.tagModel

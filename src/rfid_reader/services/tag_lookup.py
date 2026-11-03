@@ -23,6 +23,7 @@ from rfid_reader.integrations.backend_client import (
     BackendClientError,
     RfidRecordData,
 )
+from rfid_reader.services.epc_filter import EpcFilterState
 from rfid_reader.services.tag_validation import is_valid_epc
 
 LOGGER = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ class TagLookupService:
         listener: TagLookupListener,
         *,
         autostart: bool = True,
+        epc_filter_provider: Callable[[], EpcFilterState] | None = None,
     ) -> None:
         self._client_factory = client_factory
         self._listener = listener
@@ -65,6 +67,9 @@ class TagLookupService:
         self._accepting = False
         self._closed = False
         self._seen: set[TagLookupKey] = set()
+        self._processed_epcs: set[str] = set()
+        self._epc_filter_provider = epc_filter_provider or (lambda: EpcFilterState(False, ()))
+        self._epc_filter = EpcFilterState(False, ())
         self._worker = threading.Thread(
             target=self._run,
             name="tag-lookup-worker",
@@ -92,7 +97,15 @@ class TagLookupService:
             self._session_id += 1
             session_id = self._session_id
             self._seen.clear()
+            self._processed_epcs.clear()
             self._accepting = False
+            self._epc_filter = self._epc_filter_provider()
+            filter_state = self._epc_filter
+        LOGGER.info(
+            "rfid_epc_filter_%s allowed_prefixes=%d",
+            "enabled" if filter_state.enabled else "disabled",
+            len(filter_state.prefixes),
+        )
         self._emit(TagLookupSessionStarted(session_id))
         with self._lock:
             if not self._closed and session_id == self._session_id:
@@ -108,14 +121,6 @@ class TagLookupService:
     def submit(self, tag: TagRead) -> bool:
         """Agenda uma consulta sem bloquear a thread que entregou a leitura."""
 
-        LOGGER.info(
-            "tag_read_received reader_id=%s antenna=%s epc=%s rssi=%s read_at=%s",
-            tag.reader_id,
-            tag.antenna_id,
-            tag.epc,
-            tag.rssi,
-            tag.read_at.isoformat(),
-        )
         normalized_epc = tag.epc.strip().upper()
         if not is_valid_epc(normalized_epc):
             LOGGER.warning(
@@ -125,13 +130,29 @@ class TagLookupService:
                 tag.epc,
             )
             return False
+        with self._lock:
+            filter_state = self._epc_filter
+        if not filter_state.allows(normalized_epc):
+            LOGGER.debug("tag_lookup_epc_prefix_rejected prefix=%s", normalized_epc[:6])
+            return False
         key = TagLookupKey(tag.reader_id, tag.antenna_id, normalized_epc)
         with self._lock:
             if self._closed or not self._accepting or key in self._seen:
                 return False
             self._seen.add(key)
+            if normalized_epc in self._processed_epcs:
+                return False
+            # Reserva antes da fila/HTTP: callbacks concorrentes não duplicam passagem.
+            self._processed_epcs.add(normalized_epc)
             session_id = self._session_id
-
+        LOGGER.info(
+            "tag_read_received reader_id=%s antenna=%s epc=%s rssi=%s read_at=%s",
+            tag.reader_id,
+            tag.antenna_id,
+            tag.epc,
+            tag.rssi,
+            tag.read_at.isoformat(),
+        )
         self._emit_changed(
             session_id,
             key,
@@ -224,6 +245,8 @@ class TagLookupService:
                 else "Etiqueta encontrada no Backend RFID."
             ),
             customer=record.destinatario,
+            supplier=record.fornecedor,
+            tag=record.tag or "",
             invoice_number=record.notafiscal,
             order_number=record.pedido,
             volume=record.volume,

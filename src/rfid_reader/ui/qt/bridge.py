@@ -89,6 +89,7 @@ class PrototypeBridge(QObject):
     tagModel = Property(QObject, _get_model, constant=True)
     startEnabled = Property(bool, _get_start_enabled, notify=changed)
     stopEnabled = Property(bool, _get_stop_enabled, notify=changed)
+    automaticEnabled = Property(bool, lambda self: self._automatic_enabled, notify=changed)
     simulated = Property(bool, lambda self: True, constant=True)
     bannerText = Property(str, lambda self: "PRÉVIA QML · DADOS SIMULADOS", constant=True)
 

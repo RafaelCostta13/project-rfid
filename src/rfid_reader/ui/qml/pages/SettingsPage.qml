@@ -9,6 +9,7 @@ ScrollView {
     objectName: "settingsPage"
     property var settingsBridge: null
     property var diagnosticBridge: null
+    property var epcPrefixDrafts: []
     signal diagnosticRequested()
     readonly property bool isBusy: settingsBridge ? settingsBridge.busy : true
     clip: true
@@ -35,6 +36,10 @@ ScrollView {
             device.text = fields.device_id;
         }
         if (section === "all" || section === "backend") backendUrl.text = fields.backend_url;
+        if (section === "all" || section === "epc_filter") {
+            epcFilterEnabled.checked = fields.epc_filter_enabled;
+            epcPrefixDrafts = fields.epc_prefixes;
+        }
     }
     Component.onCompleted: refresh("all")
     Connections {
@@ -130,6 +135,7 @@ ScrollView {
             SettingsCard {
                 title: "Backend RFID"
                 Layout.columnSpan: parent.columns
+                Layout.row: page.availableWidth >= 850 ? 2 : 3
                 Layout.fillWidth: true
                 FormField { id: backendUrl; fieldName: "backendUrlField"; label: "URL base"; enabled: !page.isBusy; Layout.fillWidth: true }
                 RowLayout {
@@ -146,6 +152,71 @@ ScrollView {
                     }
                 }
                 FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.backend : null; Layout.fillWidth: true }
+            }
+            SettingsCard {
+                title: "Filtro de EPC"
+                Layout.columnSpan: parent.columns
+                Layout.row: page.availableWidth >= 850 ? 1 : 2
+                Layout.fillWidth: true
+                CheckBox {
+                    id: epcFilterEnabled
+                    objectName: "epcFilterEnabled"
+                    text: "Habilitar filtro de EPC"
+                    enabled: !page.isBusy
+                }
+                AppText {
+                    text: "Prefixos autorizados (6 caracteres hexadecimais)"
+                    textStyle: "caption"
+                    color: Theme.secondaryText
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Repeater {
+                        model: page.epcPrefixDrafts
+                        delegate: RowLayout {
+                            required property string modelData
+                            required property int index
+                            Layout.fillWidth: true
+                            AppText { text: modelData; Layout.fillWidth: true }
+                            ActionButton {
+                                text: "Remover"
+                                variant: "secondary"
+                                enabled: !page.isBusy
+                                onClicked: {
+                                    let values = page.epcPrefixDrafts.slice();
+                                    values.splice(index, 1);
+                                    page.epcPrefixDrafts = values;
+                                }
+                            }
+                        }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    FormField { id: newEpcPrefix; fieldName: "newEpcPrefixField"; label: "Novo prefixo"; enabled: !page.isBusy; Layout.fillWidth: true }
+                    ActionButton {
+                        objectName: "epcPrefixAddButton"
+                        text: "Adicionar"
+                        variant: "secondary"
+                        enabled: !page.isBusy
+                        onClicked: {
+                            let value = newEpcPrefix.text.trim().toUpperCase();
+                            if (value !== "") {
+                                let values = page.epcPrefixDrafts.slice();
+                                values.push(value);
+                                page.epcPrefixDrafts = values;
+                                newEpcPrefix.text = "";
+                            }
+                        }
+                    }
+                }
+                ActionButton {
+                    objectName: "epcFilterSaveButton"
+                    text: "Salvar filtro"
+                    enabled: !page.isBusy
+                    onClicked: page.settingsBridge.saveEpcFilter(epcFilterEnabled.checked, page.epcPrefixDrafts)
+                }
+                FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.epc_filter : null; Layout.fillWidth: true }
             }
         }
         AppText {

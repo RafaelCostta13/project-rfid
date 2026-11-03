@@ -19,22 +19,24 @@ from rfid_reader.ui.qt.models import (
 )
 
 
-def test_six_columns_preserve_strings_and_internal_epc(qt_application: object) -> None:
+def test_seven_columns_preserve_strings_and_internal_epc(qt_application: object) -> None:
     model = TagTableModel()
     model.start_session(1)
     assert model.upsert(MOCK_RECORDS[0], 1)
-    assert model.columnCount() == 6
-    assert [model.data(model.index(0, column)) for column in range(6)] == [
-        "lido",
+    assert model.columnCount() == 7
+    assert [model.data(model.index(0, column)) for column in range(7)] == [
+        "OK",
         "Cliente exemplo A",
+        "TAG001",
         "00012341",
         "001",
         "000056781",
         "D01",
     ]
-    assert [model.headerData(i, Qt.Orientation.Horizontal) for i in range(6)] == [
+    assert [model.headerData(i, Qt.Orientation.Horizontal) for i in range(7)] == [
         "Status",
-        "Cliente",
+        "Fornecedor",
+        "Tag",
         "Nota fiscal",
         "Volume",
         "Pedido",
@@ -50,13 +52,13 @@ def test_insert_update_and_unchanged_result_are_incremental(qt_application: obje
     resets = QSignalSpy(model.modelReset)
     model.upsert(MOCK_RECORDS[0], 1)
     model.upsert(MOCK_RECORDS[0], 1)
-    updated = replace(MOCK_RECORDS[0], customer="Atualizado", record_status="duplicado")
+    updated = replace(MOCK_RECORDS[0], supplier="Atualizado", record_status="duplicado")
     model.upsert(updated, 1)
     assert model.rowCount() == 1
     assert inserted.count() == 1
     assert changed.count() == 1
     assert resets.count() == 0
-    assert model.data(model.index(0, 0), STATUS_ROLE) == "duplicado"
+    assert model.data(model.index(0, 0), STATUS_ROLE) == "OK"
     assert model.data(model.index(0, 1), CELL_ROLE) == "Atualizado"
 
 
@@ -81,7 +83,8 @@ def test_extra_box_records_are_visible_with_safe_placeholders(qt_application: ob
     extra = replace(
         MOCK_RECORDS[0],
         status=TagLookupStatus.NOT_FOUND,
-        customer="",
+        supplier="",
+        tag="",
         invoice_number="",
         volume="",
         order_number="",
@@ -89,8 +92,9 @@ def test_extra_box_records_are_visible_with_safe_placeholders(qt_application: ob
     )
     assert model.upsert(extra, 1)
     assert model.rowCount() == 1
-    assert [model.data(model.index(0, column)) for column in range(6)] == [
+    assert [model.data(model.index(0, column)) for column in range(7)] == [
         "Extra box",
+        "—",
         "—",
         "—",
         "—",
@@ -108,10 +112,10 @@ def test_repeated_extra_box_updates_one_row_and_preserves_data(qt_application: o
     extra = replace(MOCK_RECORDS[0], status=TagLookupStatus.EXTRA_BOX, record_status="lido")
     assert model.upsert(extra, 1)
     assert model.upsert(extra, 1)
-    updated = replace(extra, customer="Cliente extra")
+    updated = replace(extra, supplier="Fornecedor extra")
     assert model.upsert(updated, 1)
     assert model.rowCount() == 1
-    assert model.data(model.index(0, 1)) == "Cliente extra"
+    assert model.data(model.index(0, 1)) == "Fornecedor extra"
 
 
 def test_session_reset_rejects_late_results(qt_application: object) -> None:
@@ -136,7 +140,7 @@ def test_invalid_indexes_roles_and_tree_parents(qt_application: object) -> None:
     assert model.rowCount(model.index(0, 0)) == 0
     assert model.columnCount(model.index(0, 0)) == 0
     assert model.headerData(-1, Qt.Orientation.Horizontal) is None
-    assert model.headerData(6, Qt.Orientation.Horizontal) is None
+    assert model.headerData(7, Qt.Orientation.Horizontal) is None
     assert model.headerData(0, Qt.Orientation.Vertical) is None
 
 
@@ -146,6 +150,6 @@ def test_model_obeys_qt_item_model_contract(qt_application: object) -> None:
     model.start_session(1)
     for record in MOCK_RECORDS:
         model.upsert(record, 1)
-    model.upsert(replace(MOCK_RECORDS[0], customer="Outro"), 1)
+    model.upsert(replace(MOCK_RECORDS[0], supplier="Outro"), 1)
     model.start_session(2)
     assert tester.model() is model

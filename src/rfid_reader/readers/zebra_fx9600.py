@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, cast
@@ -68,7 +68,7 @@ class SllurpStateIds:
 
 
 ClientFactory = Callable[
-    [str, int, float, int],
+    [str, int, float, tuple[int, ...]],
     tuple[SllurpReaderClient, SllurpStateIds],
 ]
 
@@ -77,13 +77,13 @@ def _create_client(
     host: str,
     port: int,
     timeout_seconds: float,
-    antenna_id: int,
+    antenna_ids: tuple[int, ...],
 ) -> tuple[SllurpReaderClient, SllurpStateIds]:
     from sllurp.llrp import LLRPReaderClient, LLRPReaderConfig, LLRPReaderState
 
     config = LLRPReaderConfig(
         {
-            "antennas": [antenna_id],
+            "antennas": list(antenna_ids),
             "start_inventory": False,
             "reset_on_connect": False,
             "reconnect": False,
@@ -115,7 +115,7 @@ class ZebraFX9600Reader:
         host: str,
         port: int,
         reader_id: str,
-        antenna_id: int,
+        antenna_ids: int | Sequence[int],
         timeout_seconds: float,
         *,
         client_factory: ClientFactory = _create_client,
@@ -126,7 +126,10 @@ class ZebraFX9600Reader:
         self._next_host = host
         self._next_port = port
         self._next_reader_id = reader_id
-        self._antenna_id = antenna_id
+        ids = (antenna_ids,) if isinstance(antenna_ids, int) else tuple(antenna_ids)
+        if not ids or any(type(value) is not int or value <= 0 for value in ids):
+            raise ValueError("Informe IDs de antena inteiros positivos, em uma lista não vazia.")
+        self._antenna_ids = tuple(dict.fromkeys(ids))
         self._timeout_seconds = timeout_seconds
         self._client_factory = client_factory
         self._client: SllurpReaderClient | None = None
@@ -159,7 +162,7 @@ class ZebraFX9600Reader:
                 self._host,
                 self._port,
                 self._timeout_seconds,
-                self._antenna_id,
+                self._antenna_ids,
             )
             with self._lock:
                 self._client = client
@@ -194,12 +197,14 @@ class ZebraFX9600Reader:
             if self._configuration_failed.is_set() or not client.is_alive():
                 self._disconnect_client(client)
                 self._clear_client(client)
+                LOGGER.error("reader_configuration_rejected antennas=%s", self._antenna_ids)
                 raise ReaderProtocolError("o reader rejeitou a sessão LLRP")
             LOGGER.info(
-                "reader_connected reader_id=%s reader_host=%s reader_port=%s",
+                "reader_connected reader_id=%s reader_host=%s reader_port=%s antennas=%s",
                 self._reader_id,
                 self._host,
                 self._port,
+                self._antenna_ids,
             )
 
     def configure_connection(self, host: str, port: int, reader_id: str) -> None:
@@ -239,7 +244,7 @@ class ZebraFX9600Reader:
         )
 
     def start_inventory(self, callback: TagCallback) -> bool:
-        """Solicita um único inventário na antena configurada."""
+        """Solicita um único inventário com todas as antenas configuradas."""
 
         with self._operation_lock:
             if not self.is_connected():
@@ -265,9 +270,9 @@ class ZebraFX9600Reader:
                     self._stop_complete.set()
                 raise ReaderProtocolError("não foi possível iniciar o inventário") from error
             LOGGER.info(
-                "inventory_start_requested reader_id=%s antenna=%s",
+                "inventory_start_requested reader_id=%s antennas=%s",
                 self._reader_id,
-                self._antenna_id,
+                self._antenna_ids,
             )
             if not self._inventorying.wait(self._timeout_seconds) or not self.is_connected():
                 self.disconnect()
@@ -280,9 +285,9 @@ class ZebraFX9600Reader:
                 return
             self._inventorying.set()
         LOGGER.info(
-            "inventory_started reader_id=%s antenna=%s",
+            "inventory_started reader_id=%s antennas=%s",
             self._reader_id,
-            self._antenna_id,
+            self._antenna_ids,
         )
 
     def stop_inventory(self) -> bool:
@@ -321,9 +326,9 @@ class ZebraFX9600Reader:
             if not stop_succeeded.is_set():
                 raise ReaderProtocolError("o reader rejeitou a parada do inventário")
             LOGGER.info(
-                "inventory_stopped reader_id=%s antenna=%s",
+                "inventory_stopped reader_id=%s antennas=%s",
                 self._reader_id,
-                self._antenna_id,
+                self._antenna_ids,
             )
             return True
 

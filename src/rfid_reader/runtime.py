@@ -38,6 +38,7 @@ from rfid_reader.services.automatic_inventory import (
 )
 from rfid_reader.services.backend import BackendConfigurationService, BackendHealthChecker
 from rfid_reader.services.connection_monitor import ConnectionChecker, ConnectionMonitor
+from rfid_reader.services.epc_filter import EpcFilterConfigurationService
 from rfid_reader.services.internet import InternetConnectionChecker
 from rfid_reader.services.manual_inventory import ManualInventoryService
 from rfid_reader.services.reader_configuration import (
@@ -60,12 +61,6 @@ from rfid_reader.services.waveshare_diagnostic import (
 )
 
 LOGGER = logging.getLogger(__name__)
-
-
-def configure_logging(level: str) -> None:
-    """Configura o logging compartilhado pelas entradas gráficas."""
-
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
 class OperationalReader(RFIDReader, Protocol):
@@ -143,10 +138,11 @@ class ApplicationRuntime:
             settings.reader_host,
             settings.reader_port,
             settings.reader_name,
-            settings.antennas[0],
+            settings.antennas,
             settings.connection_timeout_seconds,
         )
         store = DotEnvReaderConfigurationStore(path)
+        self.epc_filter_configuration = EpcFilterConfigurationService(settings, store)
         self.backend_configuration = BackendConfigurationService(settings, store)
         self.station_configuration = StationConfigurationService(settings, store)
         self.lookup = TagLookupService(
@@ -154,6 +150,7 @@ class ApplicationRuntime:
             settings.tag_lookup_queue_size,
             self._on_lookup,
             autostart=False,
+            epc_filter_provider=self.epc_filter_configuration.current,
         )
         self.inventory = ManualInventoryService(self.reader, self._on_inventory)
         self.automatic = AutomaticInventoryController(

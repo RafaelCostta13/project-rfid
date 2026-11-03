@@ -178,9 +178,42 @@ def test_get_rfid_record_parses_new_contract_and_preserves_strings() -> None:
     assert record is not None
     assert record.epc == "E280691500005029EEA6A275"
     assert record.pedido == "0007819215"
+    assert record.fornecedor == "BMW"
     assert record.tag is None
     assert record.read_count == 15
     assert requests[0].full_url.endswith("/api/v1/rfid_records/E280691500005029EEA6A275")
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_get_rfid_record_allows_missing_or_empty_supplier(value: object) -> None:
+    payload = backend_record()
+    payload["fornecedor"] = value
+
+    client = BackendRFIDClient(
+        "https://backend.test/",
+        3.0,
+        transport=lambda request, timeout: response(200, {"found": True, "data": payload}),
+    )
+
+    record = client.get_rfid_record("E280691500005029EEA6A275")
+
+    assert record is not None
+    assert record.fornecedor == ""
+
+
+def test_get_rfid_record_allows_absent_supplier() -> None:
+    payload = backend_record()
+    payload.pop("fornecedor")
+    client = BackendRFIDClient(
+        "https://backend.test/",
+        3.0,
+        transport=lambda request, timeout: response(200, {"found": True, "data": payload}),
+    )
+
+    record = client.get_rfid_record("E280691500005029EEA6A275")
+
+    assert record is not None
+    assert record.fornecedor == ""
 
 
 def test_get_rfid_record_treats_documented_404_as_business_not_found() -> None:

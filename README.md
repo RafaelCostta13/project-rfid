@@ -100,12 +100,18 @@ início. O EPC hexadecimal original permanece usado internamente na consulta,
 deduplicação e associação da resposta, mas não é apresentado como coluna.
 
 As consultas HTTP são processadas por uma fila limitada e por um único worker,
-sem bloquear o callback LLRP. Durante a mesma sessão, a combinação de reader,
-antena e EPC é consultada apenas uma vez. Ao parar e iniciar uma nova sessão, o
+sem bloquear o callback LLRP. Durante a mesma sessão, cada EPC é consultado apenas
+uma vez, independentemente da antena. Ao parar e iniciar uma nova sessão, o
 ROSpec é recriado, a deduplicação é limpa e o mesmo EPC pode ser lido e
 consultado novamente.
 
-Nesta etapa, o inventário utiliza somente a primeira antena de `RFID_ANTENNAS`.
+O inventário utiliza todas as antenas de `RFID_ANTENNAS` na mesma conexão LLRP.
+Configure `RFID_ANTENNAS=1,2` para duas antenas ou `RFID_ANTENNAS=1` para uma.
+Selecione as portas fisicamente disponíveis; o software não reduz a lista silenciosamente.
+O `AntennaID` real é preservado, mas cada EPC normalizado é processado somente uma vez
+por sessão, inclusive quando recebido por antenas diferentes ou após erro HTTP.
+Uma nova sessão permite processar o EPC novamente. A homologação física com duas
+antenas requer um FX9600 e ambas as antenas conectadas.
 São criadas apenas configurações transitórias da sessão e um ROSpec temporário,
 removido ao parar a leitura ou fechar a aplicação. Nenhuma configuração
 persistente do reader é alterada.
@@ -331,12 +337,18 @@ python tools/verify_windows.py
 
 O bundle fica em `dist/DSV-RFID`; distribua a pasta inteira. QML, SVG, DLLs
 e plugins Qt acompanham o executável. O `.env` real não é incorporado.
+Mantenha a configuração da estação fora da pasta do bundle, por exemplo em
+`C:\ProgramData\DSV-RFID\station.env`, e informe-a com `--env-file`.
+Os logs operacionais são gravados em
+`%LOCALAPPDATA%\DSV-RFID\logs\rfid-system.log`, com rotação de 5 MB e cinco
+backups. Se essa pasta não estiver disponível, a aplicação mantém o logging no
+fluxo padrão e continua a iniciar.
 O verificador executa somente prévia/configuração com dados fictícios em uma
 pasta separada, sem Python no PATH, e grava capturas em
 `build/rf018-distribution-smoke`. Para operação com equipamentos preparados:
 
 ```powershell
-.\dist\DSV-RFID\DSV-RFID.exe --env-file C:\RFID\estacao.env
+.\dist\DSV-RFID\DSV-RFID.exe --env-file C:\ProgramData\DSV-RFID\station.env
 ```
 
 ## Qualidade e testes

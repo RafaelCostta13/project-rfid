@@ -13,7 +13,10 @@ Rectangle {
     clip: true
 
     function columnWidth(column) {
-        const widths = [120, Math.max(190, width - 540), 120, 80, 140, 80];
+        const minimums = [100, 240, 165, 110, 75, 130, 110];
+        const extra = Math.max(0, width - minimums.reduce((total, value) => total + value, 0));
+        const widths = [minimums[0], minimums[1] + extra, minimums[2], minimums[3],
+                        minimums[4], minimums[5], minimums[6]];
         return widths[column];
     }
     Rectangle {
@@ -67,7 +70,6 @@ Rectangle {
             required property string cellText
             required property string rowStatus
             required property bool isExtraBox
-            required property string epc
             required property string extraBoxReason
             implicitWidth: container.columnWidth(column)
             implicitHeight: Theme.rowHeight
@@ -78,40 +80,17 @@ Rectangle {
             HoverHandler { id: rowHover }
             AppText {
                 objectName: "tableCell"
-                visible: !isExtraBox || column !== 0
                 anchors.fill: parent
                 anchors.leftMargin: 14
                 anchors.rightMargin: 10
                 text: cellText
                 textStyle: "tableCell"
                 verticalAlignment: Text.AlignVCenter
-                color: column === 0 ? Theme.success : Theme.text
+                color: column === 0 && !isExtraBox ? Theme.success
+                     : isExtraBox ? Theme.extraBoxAccent : Theme.text
             }
-            Column {
-                visible: isExtraBox && column === 0
-                anchors.fill: parent
-                anchors.leftMargin: 14
-                anchors.rightMargin: 10
-                anchors.topMargin: 5
-                anchors.bottomMargin: 4
-                spacing: 1
-                AppText {
-                    text: "Extra box"
-                    textStyle: "tableCell"
-                    color: Theme.extraBoxAccent
-                    width: parent.width
-                    height: 18
-                }
-                AppText {
-                    text: epc
-                    textStyle: "caption"
-                    color: Theme.secondaryText
-                    width: parent.width
-                    height: 16
-                }
-            }
-            ToolTip.visible: isExtraBox && rowHover.hovered
-            ToolTip.text: extraBoxReason === "" ? epc : extraBoxReason + " · " + epc
+            ToolTip.visible: rowHover.hovered && column !== 0
+            ToolTip.text: cellText
             TapHandler { onTapped: container.selectedRow = row }
         }
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }

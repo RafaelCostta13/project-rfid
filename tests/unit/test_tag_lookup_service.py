@@ -1,5 +1,6 @@
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from rfid_reader.domain import (
     TagRead,
 )
 from rfid_reader.integrations.backend_client import BackendClientError, RfidRecordData
+from rfid_reader.services.epc_filter import EpcFilterState
 from rfid_reader.services.local_database import LocalTagRepository
 from rfid_reader.services.tag_lookup import FRIENDLY_ERROR_MESSAGE, TagLookupService
 
@@ -119,7 +121,7 @@ class LocalCompatibilityClient:
             doca=result.dock,
             epc=result.epc,
             tag=None,
-            fornecedor="",
+            fornecedor=result.customer,
             status="pendente",
             first_read_at=None,
             last_read_at=None,
@@ -165,6 +167,7 @@ def test_deduplicates_same_reader_antenna_and_epc_in_one_session(tmp_path: Path)
         wait_until(lambda: len(completed(events, EPC_01)) == 1)
 
         assert completed(events, EPC_01)[0].result.customer == f"Cliente {EPC_01}"
+        assert completed(events, EPC_01)[0].result.supplier == f"Cliente {EPC_01}"
     finally:
         service.close()
 
@@ -236,17 +239,58 @@ def test_post_failure_is_not_retried_in_same_session(tmp_path: Path) -> None:
         service.close()
 
 
-def test_same_epc_on_another_antenna_has_an_independent_local_lookup(tmp_path: Path) -> None:
+def test_same_epc_on_another_antenna_is_processed_once_per_session(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
-    service = TagLookupService(
-        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
-    )
+    client = LocalCompatibilityClient(repository(tmp_path), "D01")
+    service = TagLookupService(lambda: client, 10, events.append)
     try:
         service.start_session()
 
-        service.submit(tag(EPC_01, 1))
-        service.submit(tag(EPC_01, 2))
+        assert service.submit(tag(EPC_01, 1))
+        assert not service.submit(tag(EPC_01.lower(), 2))
+        wait_until(lambda: len(completed(events, EPC_01)) == 1)
+        assert not service.submit(tag(EPC_01, 2))
+        assert client.get_requests == [EPC_01]
+        assert client.post_requests == [EPC_01]
+        assert completed(events, EPC_01)[0].key.antenna_id == 1
+        service.start_session()
+        assert service.submit(tag(EPC_01, 2))
         wait_until(lambda: len(completed(events, EPC_01)) == 2)
+        assert client.get_requests == [EPC_01, EPC_01]
+        assert client.post_requests == [EPC_01, EPC_01]
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("case", ["found", "already_read", "missing", "post_error"])
+def test_concurrent_antennas_do_not_duplicate_business_processing(
+    tmp_path: Path, case: str
+) -> None:
+    events: list[TagLookupEvent] = []
+    client = LocalCompatibilityClient(
+        repository(tmp_path),
+        "D01",
+        read_count=1 if case == "already_read" else 0,
+        post_error=BackendClientError("timeout") if case == "post_error" else None,
+    )
+    epc = EPC_MISSING if case == "missing" else EPC_01
+    service = TagLookupService(lambda: client, 10, events.append)
+    try:
+        service.start_session()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            accepted = list(pool.map(lambda i: service.submit(tag(epc, i % 2 + 1)), range(100)))
+        assert sum(accepted) == 1
+        wait_until(lambda: len(completed(events, epc)) == 1)
+        assert not service.submit(tag(epc, 2))
+        assert client.get_requests == [epc]
+        assert client.post_requests == ([] if case == "missing" else [epc])
+        expected = {
+            "found": TagLookupStatus.FOUND,
+            "already_read": TagLookupStatus.EXTRA_BOX,
+            "missing": TagLookupStatus.NOT_FOUND,
+            "post_error": TagLookupStatus.ERROR,
+        }
+        assert completed(events, epc)[0].result.status is expected[case]
     finally:
         service.close()
 
@@ -271,15 +315,18 @@ def test_new_session_allows_a_new_lookup_for_same_tag(tmp_path: Path) -> None:
         service.close()
 
 
-def test_processes_multiple_epcs_with_individual_results(tmp_path: Path) -> None:
+@pytest.mark.parametrize("antennas", [(1, 1), (1, 2)])
+def test_processes_multiple_epcs_with_individual_results(
+    tmp_path: Path, antennas: tuple[int, int]
+) -> None:
     events: list[TagLookupEvent] = []
     service = TagLookupService(
         lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
     )
     try:
         service.start_session()
-        for epc in (EPC_01, EPC_02):
-            service.submit(tag(epc))
+        for epc, antenna in zip((EPC_01, EPC_02), antennas, strict=True):
+            assert service.submit(tag(epc, antenna))
 
         wait_until(
             lambda: len(completed(events, EPC_01)) == 1 and len(completed(events, EPC_02)) == 1
@@ -292,6 +339,8 @@ def test_processes_multiple_epcs_with_individual_results(tmp_path: Path) -> None
         }
         assert results[EPC_01].customer == f"Cliente {EPC_01}"
         assert results[EPC_02].order_number == f"Pedido {EPC_02}"
+        assert completed(events, EPC_01)[0].key.antenna_id == antennas[0]
+        assert completed(events, EPC_02)[0].key.antenna_id == antennas[1]
     finally:
         service.close()
 
@@ -312,6 +361,30 @@ def test_invalid_epc_is_ignored_without_lookup_or_visual_event(
 
         assert not any(isinstance(event, TagLookupChanged) for event in events)
         assert "tag_lookup_invalid_epc_ignored" in caplog.text
+    finally:
+        service.close()
+
+
+def test_unauthorized_epc_is_ignored_before_deduplication_and_backend(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    events: list[TagLookupEvent] = []
+    client = LocalCompatibilityClient(repository(tmp_path), "D01")
+    service = TagLookupService(
+        lambda: client,
+        10,
+        events.append,
+        epc_filter_provider=lambda: EpcFilterState(True, ("484C44",)),
+    )
+    try:
+        service.start_session()
+        with caplog.at_level("INFO"):
+            assert not service.submit(tag(EPC_01))
+        assert client.get_requests == []
+        assert client.post_requests == []
+        assert not any(isinstance(event, TagLookupChanged) for event in events)
+        assert "tag_read_received" not in caplog.text
     finally:
         service.close()
 

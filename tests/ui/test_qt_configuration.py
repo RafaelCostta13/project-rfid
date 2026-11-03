@@ -241,8 +241,7 @@ def test_configuration_qml_loads_and_saves_without_operations(
         assert window.findChild(QObject, "settingsNavigation").property("enabled")
         assert not window.findChild(QObject, "scenarioSelector").property("visible")
         for name in (
-            "startButton",
-            "stopButton",
+            "readingControl",
             "readerTestButton",
             "waveshareTestButton",
             "backendTestButton",

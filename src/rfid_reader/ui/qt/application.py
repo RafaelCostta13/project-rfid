@@ -79,9 +79,11 @@ def run_configuration(
 ) -> int:
     """Configuração local, sem conectar RFID/COM/HTTP nem habilitar operações."""
 
+    from rfid_reader.logging_config import configure_logging
     from rfid_reader.ui.qt.configuration import ConfigurationBridge
     from rfid_reader.ui.qt.status_bridge import ConnectionBridge
 
+    configure_logging(settings.log_level)
     QQuickStyle.setStyle("Basic")
     application = QGuiApplication(["rfid-reader-qt"])
     application.setApplicationName("DSV RFID · Configurações locais")
@@ -162,7 +164,8 @@ def run_operational(
 ) -> int:
     """Único event loop Qt sobre o runtime operacional compartilhado."""
 
-    from rfid_reader.runtime import ApplicationRuntime, configure_logging
+    from rfid_reader.logging_config import configure_logging
+    from rfid_reader.runtime import ApplicationRuntime
     from rfid_reader.ui.qt.configuration import ConfigurationBridge
     from rfid_reader.ui.qt.operational import OperationalBridge
 

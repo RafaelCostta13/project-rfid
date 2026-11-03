@@ -33,6 +33,18 @@ DEFAULT_WAVESHARE_DEVICE_ID = 1
 DEFAULT_SYNC_CHECK_INTERVAL_SECONDS = 60.0
 DEFAULT_LOCAL_DATABASE_FILENAME = "rfid-reader.sqlite3"
 DEFAULT_BACKEND_BASE_URL = ""
+DEFAULT_EPC_FILTER_ENABLED = True
+DEFAULT_EPC_ALLOWED_PREFIXES = (
+    "445543",
+    "474143",
+    "47574D",
+    "484C44",
+    "4A4554",
+    "4D5743",
+    "4F4D44",
+    "534143",
+    "424D57",
+)
 STATION_DOCK_SUGGESTIONS = ("D01", "D02", "D03", "D04", "D05")
 KNOWN_LOG_LEVELS = frozenset(logging.getLevelNamesMapping())
 HOSTNAME_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
@@ -95,6 +107,8 @@ class Settings:
     station_dock: str = ""
     sync_check_interval_seconds: float = DEFAULT_SYNC_CHECK_INTERVAL_SECONDS
     backend_base_url: str = DEFAULT_BACKEND_BASE_URL
+    epc_filter_enabled: bool = DEFAULT_EPC_FILTER_ENABLED
+    epc_allowed_prefixes: tuple[str, ...] = DEFAULT_EPC_ALLOWED_PREFIXES
 
     @property
     def reader_connection(self) -> ReaderConnectionSettings:
@@ -450,12 +464,40 @@ def _log_level(environment: Mapping[str, str]) -> str:
     return level
 
 
+def _boolean(environment: Mapping[str, str], variable: str, default: bool) -> bool:
+    raw_value = environment.get(variable, str(default)).strip().lower()
+    if raw_value in {"1", "true", "yes", "sim", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "não", "nao", "off"}:
+        return False
+    raise ConfigurationError(f"{variable} deve ser booleano")
+
+
+def _epc_allowed_prefixes(environment: Mapping[str, str]) -> tuple[str, ...]:
+    from rfid_reader.services.epc_filter import parse_epc_prefixes
+
+    raw_value = environment.get("RFID_EPC_ALLOWED_PREFIXES", ",".join(DEFAULT_EPC_ALLOWED_PREFIXES))
+    if not raw_value.strip():
+        return ()
+    try:
+        return parse_epc_prefixes(raw_value)
+    except ValueError as error:
+        raise ConfigurationError(f"RFID_EPC_ALLOWED_PREFIXES: {error}") from error
+
+
 def load_config(environment: Mapping[str, str] | None = None) -> Settings:
     """Carrega e valida configurações de um mapeamento ou do ambiente do processo."""
 
     source = os.environ if environment is None else environment
     reader_connection = _reader_connection(source)
     waveshare_connection = _waveshare_connection(source)
+    epc_filter_enabled = _boolean(source, "RFID_EPC_FILTER_ENABLED", DEFAULT_EPC_FILTER_ENABLED)
+    epc_allowed_prefixes = _epc_allowed_prefixes(source)
+    if epc_filter_enabled and not epc_allowed_prefixes:
+        raise ConfigurationError(
+            "RFID_EPC_ALLOWED_PREFIXES deve conter ao menos um prefixo "
+            "quando o filtro está habilitado"
+        )
     return Settings(
         reader_host=reader_connection.host,
         reader_port=reader_connection.port,
@@ -494,4 +536,6 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
         station_dock=validate_station_dock(source.get("RFID_STATION_DOCK", "")),
         sync_check_interval_seconds=_sync_check_interval(source),
         backend_base_url=source.get("RFID_BACKEND_BASE_URL", "").strip(),
+        epc_filter_enabled=epc_filter_enabled,
+        epc_allowed_prefixes=epc_allowed_prefixes,
     )

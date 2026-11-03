@@ -42,6 +42,8 @@ class TagLookupResult:
     read_count: int | None = None
     first_read_at: str | None = None
     last_read_at: str | None = None
+    supplier: str = ""
+    tag: str = ""
 
 
 @dataclass(slots=True)

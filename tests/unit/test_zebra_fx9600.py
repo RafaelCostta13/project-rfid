@@ -3,7 +3,7 @@ from collections.abc import Callable
 import pytest
 
 from rfid_reader.domain import TagRead
-from rfid_reader.readers.base import ReaderConnectionError
+from rfid_reader.readers.base import ReaderConnectionError, ReaderProtocolError
 from rfid_reader.readers.zebra_fx9600 import (
     SllurpStateIds,
     ZebraFX9600Reader,
@@ -42,10 +42,13 @@ class FakeLowLevelClient:
 
 
 class FakeSllurpClient:
-    def __init__(self, *, configure_on_connect: bool = True) -> None:
+    def __init__(
+        self, *, configure_on_connect: bool = True, configuration_success: bool = True
+    ) -> None:
         self.llrp = FakeLowLevelClient()
         self.llrp.on_start = self.emit_inventorying
         self._configure_on_connect = configure_on_connect
+        self._configuration_success = configuration_success
         self._message_callbacks: dict[str, Callable[..., None]] = {}
         self._state_callbacks: dict[int, Callable[..., None]] = {}
         self._tag_callback: Callable[..., None] | None = None
@@ -77,7 +80,7 @@ class FakeSllurpClient:
         if self._configure_on_connect:
             self._message_callbacks["SET_READER_CONFIG_RESPONSE"](
                 self,
-                FakeMessage(),
+                FakeMessage(self._configuration_success),
             )
 
     def disconnect(self, timeout: float = 0) -> None:
@@ -141,13 +144,13 @@ def test_saved_connection_values_are_used_only_after_next_connect() -> None:
     first_client = FakeSllurpClient()
     second_client = FakeSllurpClient()
     clients = iter((first_client, second_client))
-    factory_calls: list[tuple[str, int, float, int]] = []
+    factory_calls: list[tuple[str, int, float, tuple[int, ...]]] = []
 
     def factory(
         host: str,
         port: int,
         timeout_seconds: float,
-        antenna: int,
+        antenna: tuple[int, ...],
     ) -> tuple[FakeSllurpClient, SllurpStateIds]:
         factory_calls.append((host, port, timeout_seconds, antenna))
         return next(clients), SllurpStateIds(connected=3, inventorying=18)
@@ -166,19 +169,86 @@ def test_saved_connection_values_are_used_only_after_next_connect() -> None:
 
     assert first_client.is_alive()
     assert second_client.connect_calls == 0
-    assert factory_calls == [("192.168.0.100", 5084, 0.1, 1)]
+    assert factory_calls == [("192.168.0.100", 5084, 0.1, (1,))]
 
     reader.disconnect()
     reader.connect()
 
-    assert factory_calls[-1] == ("192.168.0.214", 6000, 0.1, 1)
+    assert factory_calls[-1] == ("192.168.0.214", 6000, 0.1, (1,))
     assert second_client.connect_calls == 1
 
 
 def test_real_client_uses_gen2_session_zero_for_manual_restarts() -> None:
-    client, _ = _create_client("reader.local", 5084, 0.1, 1)
+    client, _ = _create_client("reader.local", 5084, 0.1, (1,))
 
     assert client.config.session == 0  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("antennas", [(1,), (1, 2), (4, 2, 3, 1)])
+def test_sllurp_receives_all_antennas(antennas: tuple[int, ...]) -> None:
+    client, _ = _create_client("reader.local", 5084, 0.1, antennas)
+    assert client.config.antennas == list(antennas)  # type: ignore[attr-defined]
+    assert not client.config.start_inventory  # type: ignore[attr-defined]
+    assert not client.config.reset_on_connect  # type: ignore[attr-defined]
+
+
+def test_multiple_antennas_share_connection_and_preserve_report_origin(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+    client = FakeSllurpClient()
+    calls: list[tuple[int, ...]] = []
+
+    def factory(
+        host: str, port: int, timeout: float, antennas: tuple[int, ...]
+    ) -> tuple[FakeSllurpClient, SllurpStateIds]:
+        calls.append(antennas)
+        return client, SllurpStateIds(3, 18)
+
+    reader = ZebraFX9600Reader("reader.local", 5084, "test", [2, 1, 2], 0.1, client_factory=factory)
+    received: list[TagRead] = []
+    reader.connect()
+    reader.start_inventory(received.append)
+    client.emit_tags([{"EPC": "ABC123", "AntennaID": 1}, {"EPC": "ABC123", "AntennaID": 2}])
+    reader.stop_inventory()
+    client.emit_tags([{"EPC": "ABC123", "AntennaID": 2}])
+    reader.disconnect()
+    assert calls == [(2, 1)]
+    assert [tag.antenna_id for tag in received] == [1, 2]
+    assert client.connect_calls == client.llrp.start_calls == client.llrp.stop_calls == 1
+    for event in ("reader_connected", "inventory_started", "inventory_stopped"):
+        assert any(
+            event in record.message and "antennas=(2, 1)" in record.message
+            for record in caplog.records
+        )
+
+
+def test_configuration_rejection_logs_antennas_without_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeSllurpClient(configuration_success=False)
+    calls: list[tuple[int, ...]] = []
+
+    def factory(
+        host: str, port: int, timeout: float, antennas: tuple[int, ...]
+    ) -> tuple[FakeSllurpClient, SllurpStateIds]:
+        calls.append(antennas)
+        return client, SllurpStateIds(3, 18)
+
+    reader = ZebraFX9600Reader("reader.local", 5084, "test", [1, 2], 0.1, client_factory=factory)
+    with pytest.raises(ReaderProtocolError, match="rejeitou"):
+        reader.connect()
+    assert not reader.is_connected()
+    assert calls == [(1, 2)]
+    assert client.disconnect_calls == 1
+    assert client.llrp.start_calls == 0
+    assert "reader_configuration_rejected antennas=(1, 2)" in caplog.text
+
+
+@pytest.mark.parametrize("antennas", [[], [0], [-1], [True]])
+def test_reader_rejects_invalid_antennas(antennas: list[int]) -> None:
+    with pytest.raises(ValueError, match="antena"):
+        ZebraFX9600Reader("reader.local", 5084, "test", antennas, 0.1)
 
 
 def test_connection_times_out_without_configuration_response() -> None:

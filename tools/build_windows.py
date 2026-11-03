@@ -22,6 +22,7 @@ def main() -> int:
         "-m",
         "PyInstaller",
         "--noconfirm",
+        "--clean",
         "--onedir",
         "--exclude-module",
         "tkinter",

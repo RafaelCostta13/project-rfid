@@ -69,6 +69,7 @@ class ConnectionBridge(QObject):
     extraBoxCount = Property(int, lambda self: 0, constant=True)
     startEnabled = Property(bool, lambda self: False, constant=True)
     stopEnabled = Property(bool, lambda self: False, constant=True)
+    automaticEnabled = Property(bool, lambda self: False, constant=True)
 
     def receive_status(self, kind: ConnectionKind, status: ConnectionStatus) -> None:
         """Assinatura do StatusListener; pode ser chamada por workers existentes."""

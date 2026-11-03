@@ -19,6 +19,10 @@ from rfid_reader.domain import (
     WaveshareConfigurationOutcome,
 )
 from rfid_reader.services.backend import BackendConfigurationService
+from rfid_reader.services.epc_filter import (
+    EpcFilterConfigurationService,
+    EpcFilterValidationError,
+)
 from rfid_reader.services.reader_configuration import (
     DotEnvReaderConfigurationStore,
     ReaderConfigurationService,
@@ -69,15 +73,17 @@ class ConfigurationBridge(QObject):
             )
             self._station = StationConfigurationService(settings, store)
             self._backend = BackendConfigurationService(settings, store)
+            self._epc_filter = EpcFilterConfigurationService(settings, store)
         else:
             self._reader = runtime.reader_configuration
             self._waveshare = runtime.waveshare_configuration
             self._station = runtime.station_configuration
             self._backend = runtime.backend_configuration
+            self._epc_filter = runtime.epc_filter_configuration
             self._unsubscribe = runtime.subscribe(self._runtime_feedback)
         self.feedbackReceived.connect(self._apply_feedback, Qt.ConnectionType.QueuedConnection)
 
-    def _get_fields(self) -> dict[str, str]:
+    def _get_fields(self) -> dict[str, object]:
         reader, waveshare = self._reader.current(), self._waveshare.current()
         return {
             "reader_name": reader.name,
@@ -91,6 +97,8 @@ class ConfigurationBridge(QObject):
             "device_id": str(waveshare.device_id),
             "station_dock": self._station.current(),
             "backend_url": self._backend.current(),
+            "epc_filter_enabled": self._epc_filter.current().enabled,
+            "epc_prefixes": self._epc_filter.prefixes(),
         }
 
     def _get_busy(self) -> bool:
@@ -181,6 +189,13 @@ class ConfigurationBridge(QObject):
                         else "Não foi possível salvar a URL.",
                     )
                 )
+            elif section == "epc_filter":
+                enabled = values[0] == "true"
+                prefixes = tuple(value for value in values[1].split(",") if value)
+                success, message = self._epc_filter.save(enabled, prefixes)
+                self.feedbackReceived.emit(ConfigurationFeedback(section, success, message))
+        except EpcFilterValidationError as error:
+            self.feedbackReceived.emit(ConfigurationFeedback(section, False, str(error)))
         except Exception as error:
             # Fronteira worker/UI: evita Future silencioso e nunca registra valores do formulário.
             LOGGER.error(
@@ -215,6 +230,11 @@ class ConfigurationBridge(QObject):
     @Slot(str, result=bool)
     def saveBackend(self, url: str) -> bool:
         return self._submit("backend", (url,))
+
+    @Slot(bool, list, result=bool)
+    def saveEpcFilter(self, enabled: bool, prefixes: list[object]) -> bool:
+        values = tuple(str(prefix) for prefix in prefixes)
+        return self._submit("epc_filter", ("true" if enabled else "false", ",".join(values)))
 
     def _submit_test(self, section: str, values: tuple[str, ...]) -> bool:
         if self._closed or self._busy or self._runtime is None:

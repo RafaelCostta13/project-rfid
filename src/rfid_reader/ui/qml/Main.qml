@@ -45,9 +45,9 @@ ApplicationWindow {
             RowLayout {
                 objectName: "connectionIndicators"
                 anchors.fill: parent
-                anchors.leftMargin: 24
-                anchors.rightMargin: 24
-                spacing: 28
+                anchors.leftMargin: window.width < 1100 ? 12 : 24
+                anchors.rightMargin: window.width < 1100 ? 12 : 24
+                spacing: window.width < 1100 ? 12 : 28
                 Repeater {
                     model: window.uiBridge.connections
                     StatusIndicator {
@@ -57,6 +57,22 @@ ApplicationWindow {
                         label: modelData.label
                         state: modelData.state
                         description: modelData.description
+                    }
+                }
+                ActionButton {
+                    objectName: "readingControl"
+                    text: window.uiBridge.automaticEnabled ? "Parar leitura" : "Iniciar leitura"
+                    iconName: window.uiBridge.automaticEnabled ? "stop" : "play"
+                    variant: window.uiBridge.automaticEnabled ? "danger" : "success"
+                    enabled: window.uiBridge.automaticEnabled
+                        ? window.uiBridge.stopEnabled : window.uiBridge.startEnabled
+                    Layout.preferredWidth: 160
+                    Layout.minimumWidth: 146
+                    onClicked: {
+                        if (window.uiBridge.automaticEnabled)
+                            window.uiBridge.requestStop()
+                        else
+                            window.uiBridge.requestStart()
                     }
                 }
             }
