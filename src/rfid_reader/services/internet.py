@@ -7,12 +7,13 @@ import threading
 from collections.abc import Callable
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from rfid_reader.domain import ConnectionStatus
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_CONNECTIVITY_URL = "https://example.com/"
+BACKEND_HEALTH_PATH = "/api/v1/health"
 
 
 class ResponseLike(Protocol):
@@ -26,13 +27,26 @@ def _open_url(url: str, timeout: float) -> ResponseLike:
     request = Request(
         url,
         headers={"User-Agent": "rfid-reader/0.1"},
-        method="HEAD",
+        method="GET",
     )
     try:
         return cast(ResponseLike, urlopen(request, timeout=timeout))
     except HTTPError as error:
         # Uma resposta HTTP, mesmo 4xx/5xx, confirma que a internet está acessível.
         return error
+
+
+def backend_health_url(base_url: str) -> str:
+    """Monta a URL HTTPS de health a partir da URL base configurada do Backend."""
+
+    value = base_url.strip()
+    if not value:
+        return ""
+    parsed = urlsplit(value if "://" in value else f"https://{value}")
+    if not parsed.hostname:
+        return ""
+    path = f"{parsed.path.rstrip('/')}{BACKEND_HEALTH_PATH}"
+    return urlunsplit(("https", parsed.netloc, path, "", ""))
 
 
 class InternetConnectionChecker:
@@ -42,7 +56,7 @@ class InternetConnectionChecker:
         self,
         timeout_seconds: float,
         *,
-        url: str = DEFAULT_CONNECTIVITY_URL,
+        url: str,
         request_factory: RequestFactory = _open_url,
     ) -> None:
         self._timeout_seconds = timeout_seconds
@@ -54,6 +68,9 @@ class InternetConnectionChecker:
 
     def check(self) -> ConnectionStatus:
         if self._closed.is_set():
+            return ConnectionStatus.DISCONNECTED
+        if not self._url:
+            LOGGER.debug("internet_connection_unavailable reason=backend_url_not_configured")
             return ConnectionStatus.DISCONNECTED
         try:
             response = self._request_factory(self._url, self._timeout_seconds)

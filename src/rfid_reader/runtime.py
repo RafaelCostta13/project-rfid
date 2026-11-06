@@ -39,7 +39,7 @@ from rfid_reader.services.automatic_inventory import (
 from rfid_reader.services.backend import BackendConfigurationService, BackendHealthChecker
 from rfid_reader.services.connection_monitor import ConnectionChecker, ConnectionMonitor
 from rfid_reader.services.epc_filter import EpcFilterConfigurationService
-from rfid_reader.services.internet import InternetConnectionChecker
+from rfid_reader.services.internet import InternetConnectionChecker, backend_health_url
 from rfid_reader.services.manual_inventory import ManualInventoryService
 from rfid_reader.services.reader_configuration import (
     DotEnvReaderConfigurationStore,
@@ -182,7 +182,10 @@ class ApplicationRuntime:
         )
         checkers: dict[ConnectionKind, ConnectionChecker] = {
             ConnectionKind.RFID: _SharedReaderChecker(self.reader, self._reader_gate),
-            ConnectionKind.INTERNET: InternetConnectionChecker(self._timeout),
+            ConnectionKind.INTERNET: InternetConnectionChecker(
+                self._timeout,
+                url=backend_health_url(settings.backend_base_url),
+            ),
             ConnectionKind.WAVESHARE: WaveshareConnectionChecker(
                 self.diagnostic, self.waveshare_tester
             ),

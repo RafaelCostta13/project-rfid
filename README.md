@@ -55,12 +55,13 @@ O arquivo `.env` é local e ignorado pelo Git. Na ausência de valores explícit
 o reader usa `192.168.0.214`, porta `5084` e nome `fx9600-01`. Valores informados
 são sempre validados. `RFID_CONNECTION_TIMEOUT_SECONDS` controla o timeout das
 sondagens e `RFID_STATUS_CHECK_INTERVAL_SECONDS` define o intervalo entre
-atualizações.
+atualizações. O status Internet consulta por HTTPS a rota `/api/v1/health` do
+endereço definido em `RFID_BACKEND_BASE_URL`.
 
 Para consultar EPCs e registrar passagens no Backend Rails, configure também:
 
 ```dotenv
-RFID_BACKEND_BASE_URL=http://backend-de-testes:3000
+RFID_BACKEND_BASE_URL=https://backend-de-testes:3000
 ```
 
 Health, GET EPC e POST de passagem usam o cliente HTTP existente. URLs e
