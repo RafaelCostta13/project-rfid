@@ -16,6 +16,9 @@ def main() -> int:
     if sys.platform != "win32":
         parser.error("Execute com Python nativo do Windows; não utilizar WSL.")
     root = Path(__file__).resolve().parents[1]
+    icon = root / "packaging" / "assets" / "dsv_rfid.ico"
+    if not icon.is_file():
+        parser.error(f"Ícone Windows ausente: {icon}")
     output = args.dist_dir.resolve()
     command = [
         sys.executable,
@@ -28,6 +31,8 @@ def main() -> int:
         "tkinter",
         "--name",
         "DSV-RFID",
+        "--icon",
+        str(icon),
         "--paths",
         str(root / "src"),
         "--collect-data",

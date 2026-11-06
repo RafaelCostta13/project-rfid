@@ -24,6 +24,9 @@ Item {
                 ctx.lineTo(6, 16); ctx.closePath(); ctx.stroke();
             } else if (icon.name === "stop") {
                 ctx.strokeRect(5, 5, 10, 10);
+            } else if (icon.name === "activity") {
+                ctx.beginPath(); ctx.moveTo(2, 11); ctx.lineTo(6, 11); ctx.lineTo(8, 5);
+                ctx.lineTo(12, 16); ctx.lineTo(14, 9); ctx.lineTo(18, 9); ctx.stroke();
             } else if (icon.name === "settings") {
                 ctx.beginPath(); ctx.arc(10, 10, 5, 0, Math.PI * 2); ctx.stroke();
                 ctx.beginPath(); ctx.arc(10, 10, 1.5, 0, Math.PI * 2); ctx.stroke();

@@ -289,3 +289,26 @@ def test_capture_io_failure_exits_without_background_process(
     )
     assert result.returncode == 1
     assert "Falha na captura" in result.stderr
+
+
+def test_status_page_reuses_connection_model_without_global_status_bar(
+    qt_application: object,
+) -> None:
+    bridge = PrototypeBridge()
+    engine, window = create_engine(bridge)
+    try:
+        window.show()
+        QTest.qWait(40)
+        status = window.findChild(QObject, "statusNavigation")
+        assert status is not None
+        status.clicked.emit()
+        QTest.qWait(20)
+        assert window.property("currentPage") == "status"
+        assert window.findChild(QObject, "statusPageTitle").property("text") == "Status sistema"
+        assert window.findChild(QObject, "connectionIndicators") is None
+        status_source = (QML_PATH.parent / "pages" / "StatusPage.qml").read_text(encoding="utf-8")
+        assert "model: page.uiBridge.connections" in status_source
+    finally:
+        window.close()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

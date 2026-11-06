@@ -37,46 +37,7 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
-        AppHeader { bannerText: window.uiBridge.bannerText; Layout.fillWidth: true }
-        Rectangle {
-            color: Theme.alternate
-            Layout.fillWidth: true
-            implicitHeight: 48
-            RowLayout {
-                objectName: "connectionIndicators"
-                anchors.fill: parent
-                anchors.leftMargin: window.width < 1100 ? 12 : 24
-                anchors.rightMargin: window.width < 1100 ? 12 : 24
-                spacing: window.width < 1100 ? 12 : 28
-                Repeater {
-                    model: window.uiBridge.connections
-                    StatusIndicator {
-                        required property var modelData
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 1
-                        label: modelData.label
-                        state: modelData.state
-                        description: modelData.description
-                    }
-                }
-                ActionButton {
-                    objectName: "readingControl"
-                    text: window.uiBridge.automaticEnabled ? "Parar leitura" : "Iniciar leitura"
-                    iconName: window.uiBridge.automaticEnabled ? "stop" : "play"
-                    variant: window.uiBridge.automaticEnabled ? "danger" : "success"
-                    enabled: window.uiBridge.automaticEnabled
-                        ? window.uiBridge.stopEnabled : window.uiBridge.startEnabled
-                    Layout.preferredWidth: 160
-                    Layout.minimumWidth: 146
-                    onClicked: {
-                        if (window.uiBridge.automaticEnabled)
-                            window.uiBridge.requestStop()
-                        else
-                            window.uiBridge.requestStart()
-                    }
-                }
-            }
-        }
+        AppHeader { uiBridge: window.uiBridge; Layout.fillWidth: true }
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -94,8 +55,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.margins: window.width < 1100 ? 16 : 28
-                currentIndex: window.currentPage === "diagnostic" ? 2 : window.currentPage === "settings" ? 1 : 0
+                currentIndex: window.currentPage === "diagnostic" ? 3 : window.currentPage === "settings" ? 2 : window.currentPage === "status" ? 1 : 0
                 StartPage { uiBridge: window.uiBridge }
+                StatusPage { uiBridge: window.uiBridge }
                 SettingsPage {
                     id: settingsPage
                     settingsBridge: window.settingsBridge

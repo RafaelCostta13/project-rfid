@@ -42,6 +42,16 @@ Rectangle {
             onClicked: sidebar.pageRequested("start")
         }
         ActionButton {
+            objectName: "statusNavigation"
+            text: "Status"
+            iconName: "activity"
+            iconOnly: sidebar.collapsed
+            tooltipText: "Status"
+            variant: sidebar.currentPage === "status" ? "primary" : "secondary"
+            Layout.fillWidth: true
+            onClicked: sidebar.pageRequested("status")
+        }
+        ActionButton {
             objectName: "settingsNavigation"
             text: "Configurações"
             iconName: "settings"

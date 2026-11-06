@@ -6,6 +6,7 @@ Rectangle {
     id: container
     required property var tableModel
     property int selectedRow: -1
+    readonly property int tableRowHeight: 36
     readonly property var headings: tableModel.columnTitles
     color: Theme.surface
     border.color: Theme.border
@@ -61,7 +62,7 @@ Rectangle {
         clip: true
         model: container.tableModel
         columnWidthProvider: function(column) { return container.columnWidth(column); }
-        rowHeightProvider: function(row) { return Theme.rowHeight; }
+        rowHeightProvider: function(row) { return container.tableRowHeight; }
         onWidthChanged: forceLayout()
         onRowsChanged: container.selectedRow = -1
         delegate: Rectangle {
@@ -72,7 +73,7 @@ Rectangle {
             required property bool isExtraBox
             required property string extraBoxReason
             implicitWidth: container.columnWidth(column)
-            implicitHeight: Theme.rowHeight
+            implicitHeight: container.tableRowHeight
             color: container.selectedRow === row ? Theme.primary
                  : isExtraBox && rowHover.hovered ? Theme.extraBoxHover
                  : isExtraBox ? Theme.extraBoxSurface
@@ -85,6 +86,7 @@ Rectangle {
                 anchors.rightMargin: 10
                 text: cellText
                 textStyle: "tableCell"
+                font.pixelSize: 12
                 verticalAlignment: Text.AlignVCenter
                 color: column === 0 && !isExtraBox ? Theme.success
                      : isExtraBox ? Theme.extraBoxAccent : Theme.text

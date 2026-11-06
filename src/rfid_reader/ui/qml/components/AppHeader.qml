@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import "../theme"
 
 Rectangle {
-    property string bannerText: "PRÉVIA QML · DADOS SIMULADOS"
+    required property var uiBridge
     color: Theme.header
     implicitHeight: 76
     RowLayout {
@@ -31,10 +31,18 @@ Rectangle {
         }
         AppText { text: "RFID SYSTEM"; textStyle: "section" }
         Item { Layout.fillWidth: true }
-        AppText {
-            text: bannerText
-            textStyle: "caption"
-            color: Theme.mutedText
+        ActionButton {
+            objectName: "readingControl"
+            text: uiBridge.automaticEnabled ? "Parar leitura" : "Iniciar leitura"
+            iconName: uiBridge.automaticEnabled ? "stop" : "play"
+            variant: uiBridge.automaticEnabled ? "danger" : "success"
+            enabled: uiBridge.automaticEnabled ? uiBridge.stopEnabled : uiBridge.startEnabled
+            Layout.preferredWidth: 160
+            Layout.minimumWidth: 146
+            onClicked: {
+                if (uiBridge.automaticEnabled) uiBridge.requestStop()
+                else uiBridge.requestStart()
+            }
         }
     }
 }
