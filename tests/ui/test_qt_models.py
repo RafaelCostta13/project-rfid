@@ -26,22 +26,50 @@ def test_seven_columns_preserve_strings_and_internal_epc(qt_application: object)
     assert model.columnCount() == 7
     assert [model.data(model.index(0, column)) for column in range(7)] == [
         "OK",
-        "Cliente exemplo A",
-        "TAG001",
+        "Fornecedor exemplo 1",
         "00012341",
         "001",
         "000056781",
         "D01",
+        "Dealer exemplo 1",
     ]
     assert [model.headerData(i, Qt.Orientation.Horizontal) for i in range(7)] == [
         "Status",
-        "Fornecedor",
-        "Tag",
-        "Nota fiscal",
+        "Cliente",
+        "Nota Fiscal",
         "Volume",
         "Pedido",
         "Doca",
+        "Dealer",
     ]
+
+
+def test_dealer_uses_customer_not_supplier_or_internal_tag(qt_application: object) -> None:
+    model = TagTableModel()
+    model.start_session(1)
+    result = replace(
+        MOCK_RECORDS[0],
+        supplier="Fornecedor da API",
+        customer="Destinatário da API",
+        tag="Tag interna que não deve aparecer",
+    )
+
+    assert model.upsert(result, 1)
+    assert model.data(model.index(0, 1)) == "Fornecedor da API"
+    assert model.data(model.index(0, 6)) == "Destinatário da API"
+    assert all(
+        model.data(model.index(0, column)) != "Tag interna que não deve aparecer"
+        for column in range(model.columnCount())
+    )
+
+
+@pytest.mark.parametrize("customer", ["", "   "])
+def test_missing_dealer_uses_placeholder(customer: str, qt_application: object) -> None:
+    model = TagTableModel()
+    model.start_session(1)
+
+    assert model.upsert(replace(MOCK_RECORDS[0], customer=customer), 1)
+    assert model.data(model.index(0, 6)) == "—"
 
 
 def test_insert_update_and_unchanged_result_are_incremental(qt_application: object) -> None:
@@ -83,6 +111,7 @@ def test_extra_box_records_are_visible_with_safe_placeholders(qt_application: ob
     extra = replace(
         MOCK_RECORDS[0],
         status=TagLookupStatus.NOT_FOUND,
+        customer="",
         supplier="",
         tag="",
         invoice_number="",

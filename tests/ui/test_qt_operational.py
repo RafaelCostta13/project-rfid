@@ -143,11 +143,11 @@ def test_full_cycle_updates_qml_table_counter_and_preserves_relays(rig: Rig) -> 
     assert [model.data(model.index(0, column)) for column in range(7)] == [
         "OK",
         "Fornecedor real do contrato",
-        "—",
         "00123",
         "2/4",
         "00042",
         "DOCA 35",
+        "Cliente real do contrato",
     ]
     assert thread_ids == [QCoreApplication.instance().thread()]
     rig.end_cycle()

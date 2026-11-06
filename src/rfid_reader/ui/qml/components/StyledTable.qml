@@ -13,10 +13,10 @@ Rectangle {
     clip: true
 
     function columnWidth(column) {
-        const minimums = [100, 240, 165, 110, 75, 130, 110];
+        const minimums = [100, 180, 130, 85, 135, 115, 300];
         const extra = Math.max(0, width - minimums.reduce((total, value) => total + value, 0));
-        const widths = [minimums[0], minimums[1] + extra, minimums[2], minimums[3],
-                        minimums[4], minimums[5], minimums[6]];
+        const widths = [minimums[0], minimums[1], minimums[2], minimums[3],
+                        minimums[4], minimums[5], minimums[6] + extra];
         return widths[column];
     }
     Rectangle {

@@ -226,7 +226,7 @@ class BackendRFIDClient:
             volume=self._required_text(data, "volume"),
             pedido=self._required_text(data, "pedido"),
             notafiscal=self._required_text(data, "notafiscal"),
-            destinatario=self._required_text(data, "destinatario"),
+            destinatario=self._optional_text(data, "destinatario") or "",
             endereco=self._required_text(data, "endereco"),
             numero=self._required_text(data, "numero"),
             cidade=self._required_text(data, "cidade"),

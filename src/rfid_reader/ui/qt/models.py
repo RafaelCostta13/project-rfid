@@ -15,12 +15,12 @@ from rfid_reader.domain import TagLookupResult, TagLookupStatus
 Index = QModelIndex | QPersistentModelIndex
 COLUMNS = (
     ("record_status", "Status"),
-    ("supplier", "Fornecedor"),
-    ("tag", "Tag"),
-    ("invoice_number", "Nota fiscal"),
+    ("supplier", "Cliente"),
+    ("invoice_number", "Nota Fiscal"),
     ("volume", "Volume"),
     ("order_number", "Pedido"),
     ("dock", "Doca"),
+    ("customer", "Dealer"),
 )
 CELL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 STATUS_ROLE = CELL_ROLE + 1
@@ -81,11 +81,11 @@ class TagTableModel(QAbstractTableModel):
         values = (
             "Extra box" if is_extra_box else "OK",
             self._display_value(result.supplier, True),
-            self._display_value(result.tag, True),
             self._display_value(result.invoice_number, is_extra_box),
             self._display_value(result.volume, is_extra_box),
             self._display_value(result.order_number, is_extra_box),
             self._display_value(result.dock, is_extra_box),
+            self._display_value(result.customer, True),
         )
         return values[index.column()]
 
@@ -103,7 +103,7 @@ class TagTableModel(QAbstractTableModel):
 
     @staticmethod
     def _display_value(value: str, is_extra_box: bool) -> str:
-        return value if value else "—" if is_extra_box else value
+        return value if value.strip() else "—" if is_extra_box else value
 
     def headerData(
         self,

@@ -216,6 +216,38 @@ def test_get_rfid_record_allows_absent_supplier() -> None:
     assert record.fornecedor == ""
 
 
+@pytest.mark.parametrize("value", [None, ""])
+def test_get_rfid_record_allows_missing_or_empty_recipient(value: object) -> None:
+    payload = backend_record()
+    payload["destinatario"] = value
+
+    client = BackendRFIDClient(
+        "https://backend.test/",
+        3.0,
+        transport=lambda request, timeout: response(200, {"found": True, "data": payload}),
+    )
+
+    record = client.get_rfid_record("E280691500005029EEA6A275")
+
+    assert record is not None
+    assert record.destinatario == ""
+
+
+def test_get_rfid_record_allows_absent_recipient() -> None:
+    payload = backend_record()
+    payload.pop("destinatario")
+    client = BackendRFIDClient(
+        "https://backend.test/",
+        3.0,
+        transport=lambda request, timeout: response(200, {"found": True, "data": payload}),
+    )
+
+    record = client.get_rfid_record("E280691500005029EEA6A275")
+
+    assert record is not None
+    assert record.destinatario == ""
+
+
 def test_get_rfid_record_treats_documented_404_as_business_not_found() -> None:
     client = BackendRFIDClient(
         "https://backend.test",
