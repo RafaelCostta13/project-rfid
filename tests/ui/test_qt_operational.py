@@ -47,11 +47,14 @@ def visual_child(window: object, name: str) -> QObject:
     raise AssertionError(f"Controle QML ausente: {name}")
 
 
-def connection_indicators(window: object) -> tuple[QQuickItem, list[QQuickItem]]:
-    bar = window.findChild(QQuickItem, "connectionIndicators")
-    assert bar is not None
-    items = [item for item in bar.childItems() if item.property("label") is not None]
-    return bar, sorted(items, key=lambda item: item.x())
+def connection_indicators(window: object) -> list[QQuickItem]:
+    status_navigation = window.findChild(QObject, "statusNavigation")
+    assert status_navigation is not None
+    status_navigation.clicked.emit()
+    QTest.qWait(20)
+    container = window.findChild(QQuickItem, "statusIndicators")
+    assert container is not None
+    return [item for item in container.childItems() if item.property("label") is not None]
 
 
 class Rig:
@@ -334,7 +337,7 @@ def test_postgresql_health_failure_updates_system_and_preserves_readiness(rig: R
 
 
 @pytest.mark.parametrize("size", [(910, 512), (1366, 768), (1920, 1080)])
-def test_start_has_indicators_and_single_reading_control(
+def test_start_has_no_global_indicators_and_single_reading_control(
     rig: Rig, size: tuple[int, int], tmp_path: Path
 ) -> None:
     messages: list[str] = []
@@ -345,7 +348,8 @@ def test_start_has_indicators_and_single_reading_control(
         window.show()
         QTest.qWait(80)
         assert window.property("currentPage") == "start"
-        bar, items = connection_indicators(window)
+        assert window.findChild(QQuickItem, "connectionIndicators") is None
+        items = connection_indicators(window)
         assert [item.property("label") for item in items] == [
             "RFID",
             "Internet",
@@ -353,17 +357,13 @@ def test_start_has_indicators_and_single_reading_control(
             "Sistema",
         ]
         assert len(items) == 4 and all(item.isVisible() for item in items)
-        assert max(item.width() for item in items) - min(item.width() for item in items) <= 1
-        assert max(item.y() for item in items) - min(item.y() for item in items) <= 1
-        assert items[0].x() == pytest.approx(0, abs=1)
-        for left, right in zip(items, items[1:], strict=False):
-            assert left.x() + left.width() < right.x()
+        assert window.property("currentPage") == "status"
+        assert window.findChild(QObject, "statusPageTitle").property("text") == "Status sistema"
         control = window.findChild(QQuickItem, "readingControl")
         assert control is not None and control.isVisible()
         assert window.findChild(QObject, "startButton") is None
         assert window.findChild(QObject, "stopButton") is None
-        assert control.x() > items[-1].x()
-        assert control.x() + control.width() == pytest.approx(bar.width(), abs=1)
+        assert control.x() + control.width() <= window.width()
         assert control.property("text") == "Iniciar leitura"
         assert control.property("iconName") == "play"
         assert control.property("variant") == "success"
@@ -388,7 +388,7 @@ def test_four_operational_indicators_receive_existing_worker_events(
     try:
         window.show()
         QTest.qWait(40)
-        _, items = connection_indicators(window)
+        items = connection_indicators(window)
         assert len(items) == 4 and all(item.property("state") == "unknown" for item in items)
         for status in ConnectionStatus:
 
@@ -400,7 +400,7 @@ def test_four_operational_indicators_receive_existing_worker_events(
             worker.start()
             worker.join()
             QCoreApplication.processEvents()
-            _, items = connection_indicators(window)
+            items = connection_indicators(window)
             assert [item.property("label") for item in items] == list(CONNECTION_LABELS.values())
             assert all(item.property("state") == STATE_COLORS[status] for item in items)
             assert all(item.property("description") == status.value for item in items)
