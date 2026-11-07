@@ -8,3 +8,4 @@ def test_windows_build_embeds_provided_icon() -> None:
     assert (root / "packaging" / "assets" / "dsv_rfid.ico").is_file()
     assert '"--icon"' in script
     assert '"dsv_rfid.ico"' in script
+    assert '"--windowed"' in script

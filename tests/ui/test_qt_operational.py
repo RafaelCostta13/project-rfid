@@ -364,9 +364,11 @@ def test_start_has_no_global_indicators_and_single_reading_control(
         assert window.findChild(QObject, "startButton") is None
         assert window.findChild(QObject, "stopButton") is None
         assert control.x() + control.width() <= window.width()
-        assert control.property("text") == "Iniciar leitura"
-        assert control.property("iconName") == "play"
-        assert control.property("variant") == "success"
+        assert control.property("text") == "Parar leitura"
+        assert control.property("iconName") == "stop"
+        assert control.property("variant") == "danger"
+        assert rig.bridge.operationTitle == "Pronto para leitura"
+        assert rig.reader.starts == 0
         capture = window.grabWindow()
         assert not capture.isNull() and capture.save(str(tmp_path / "start-aj01.png"))
         assert not messages, "\n".join(messages)

@@ -27,6 +27,7 @@ def main() -> int:
         "--noconfirm",
         "--clean",
         "--onedir",
+        "--windowed",
         "--exclude-module",
         "tkinter",
         "--name",

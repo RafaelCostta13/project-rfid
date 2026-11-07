@@ -96,22 +96,18 @@ class OperationalBridge(QObject):
             return "Leitura em andamento"
         if self._inventory is InventoryStatus.ERROR:
             return "Falha na leitura RFID"
-        if not self._ready():
-            return (
-                "Verificando conexões"
-                if self._operation_state() == "checking"
-                else "Sistema indisponível"
-            )
-        return "Aguardando DI1" if self._automatic else "Sistema apto"
+        if self._automatic and self._ready():
+            return "Pronto para leitura"
+        return "Leitura parada"
 
     def _operation_description(self) -> str:
         if self._message:
             return self._message
         if self._inventory is InventoryStatus.READING:
             return "Inventário ativo · DI2 encerra o ciclo · limite de 60 segundos."
-        if self._automatic:
+        if self._automatic and self._ready():
             return "Modo automático habilitado · aguardando DI1 ATIVA → DESATIVADA."
-        return "Iniciar leitura habilita o modo automático; o inventário aguarda DI1."
+        return "Leitura desabilitada ou aguardando conexões operacionais."
 
     bannerText = Property(str, lambda self: "OPERAÇÃO RFID", constant=True)
     operationState = Property(str, _operation_state, notify=changed)

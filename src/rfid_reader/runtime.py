@@ -132,6 +132,8 @@ class ApplicationRuntime:
         self._closed = threading.Event()
         self._listeners: list[Callable[[RuntimeEvent], None]] = []
         self._statuses: dict[ConnectionKind, ConnectionStatus] = {}
+        self._manual_automatic_stop = False
+        self._automatic_start_pending = False
         self._backend_factory = deps.backend_factory
         self._timeout = settings.connection_timeout_seconds
         self.reader = deps.reader or ZebraFX9600Reader(
@@ -252,6 +254,7 @@ class ApplicationRuntime:
         self._publish("diagnostic", event)
 
     def _on_connection(self, kind: ConnectionKind, status: ConnectionStatus) -> None:
+        enable_automatic = False
         with self._lock:
             if self._closing:
                 return
@@ -259,11 +262,23 @@ class ApplicationRuntime:
         if kind is ConnectionKind.RFID and status is ConnectionStatus.CONNECTED:
             self.inventory.connection_recovered()
         self.automatic.update_connection_status(kind, status)
+        with self._lock:
+            if (
+                not self._manual_automatic_stop
+                and not self._automatic_start_pending
+                and not self.automatic.enabled
+                and self.automatic.ready
+            ):
+                self._automatic_start_pending = True
+                enable_automatic = True
         self._publish("connection", (kind, status))
         if kind is ConnectionKind.WAVESHARE and status is ConnectionStatus.CONNECTED:
             with self._lock:
                 if not self._closing:
                     self.diagnostic.connect_automatic()
+        if enable_automatic and not self._start_automatic(manual=False):
+            with self._lock:
+                self._automatic_start_pending = False
 
     def statuses(self) -> dict[ConnectionKind, ConnectionStatus]:
         with self._lock:
@@ -301,15 +316,29 @@ class ApplicationRuntime:
             )
 
     def start_automatic(self) -> bool:
+        return self._start_automatic(manual=True)
+
+    def _start_automatic(self, *, manual: bool) -> bool:
         def enable() -> bool:
             # Devolve o diagnóstico à operação antes de armar DI1.
             self.diagnostic.resume_automatic()
             self.inventory.connection_recovered()
-            return self.automatic.enable()
+            try:
+                return self.automatic.enable()
+            finally:
+                with self._lock:
+                    self._automatic_start_pending = False
 
+        with self._lock:
+            if manual:
+                self._manual_automatic_stop = False
+            elif self._closing:
+                return False
         return self.submit("start", enable)
 
     def stop_automatic(self) -> bool:
+        with self._lock:
+            self._manual_automatic_stop = True
         return self.submit("stop", self.automatic.disable)
 
     def test_reader(self, name: str, host: str, port: str) -> bool:

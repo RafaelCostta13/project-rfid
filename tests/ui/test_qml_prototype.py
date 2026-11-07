@@ -13,7 +13,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
 
-from rfid_reader.ui.qt.application import QML_PATH, create_engine
+from rfid_reader.ui.qt.application import QML_PATH, WINDOW_ICON_PATH, create_engine
 from rfid_reader.ui.qt.bridge import PrototypeBridge
 from rfid_reader.ui.qt.mock_data import PrototypeScenario, PrototypeTheme
 
@@ -32,6 +32,7 @@ def test_qml_loads_assets_bindings_and_layout(
     messages: list[str] = []
     old_handler = qInstallMessageHandler(lambda kind, context, message: messages.append(message))
     bridge = PrototypeBridge(theme=theme)
+    assert WINDOW_ICON_PATH.is_file()
     engine, window = create_engine(bridge)
     try:
         window.resize(width, height)
@@ -40,6 +41,7 @@ def test_qml_loads_assets_bindings_and_layout(
         logo = window.findChild(QObject, "brandLogo")
         assert logo is not None
         assert logo.property("ready") is True
+        assert not window.icon().isNull()
         assert "dsv_logo.svg" in logo.property("source").toString()
         assert window.findChild(QObject, "foundCount").property("text") == "5"
         assert window.findChild(QObject, "tagTable").property("rows") == 5

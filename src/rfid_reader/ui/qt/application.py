@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import ctypes
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QTimer, QUrl
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -19,10 +21,19 @@ if TYPE_CHECKING:
     from rfid_reader.ui.qt.configuration import ConfigurationBridge
 
 QML_PATH = Path(__file__).resolve().parent.parent / "qml" / "Main.qml"
+WINDOW_ICON_PATH = QML_PATH.parent / "assets" / "branding" / "dsv_rfid.ico"
 
 
 class PrototypeError(RuntimeError):
     """Falha ao carregar ou renderizar a prévia QML."""
+
+
+def _configure_application_icon(application: QGuiApplication) -> None:
+    """Define o ícone da janela a partir do recurso empacotado com o QML."""
+
+    application.setWindowIcon(QIcon(str(WINDOW_ICON_PATH)))
+    if sys.platform == "win32":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("com.dsv.rfid")
 
 
 def create_engine(
@@ -46,6 +57,7 @@ def create_engine(
     roots = engine.rootObjects()
     if not roots or not isinstance(roots[0], QQuickWindow):
         raise PrototypeError("Não foi possível carregar Main.qml; consulte os erros QML.")
+    roots[0].setIcon(QIcon(str(WINDOW_ICON_PATH)))
     return engine, roots[0]
 
 
@@ -61,6 +73,7 @@ def run_prototype(
 
     QQuickStyle.setStyle("Basic")
     application = QGuiApplication(["rfid-reader-qt"])
+    _configure_application_icon(application)
     application.setApplicationName("DSV RFID · Protótipo simulado")
     application.setOrganizationName("DSV")
     bridge = PrototypeBridge(theme, scenario)
@@ -86,6 +99,7 @@ def run_configuration(
     configure_logging(settings.log_level)
     QQuickStyle.setStyle("Basic")
     application = QGuiApplication(["rfid-reader-qt"])
+    _configure_application_icon(application)
     application.setApplicationName("DSV RFID · Configurações locais")
     application.setOrganizationName("DSV")
     bridge = ConnectionBridge(theme)
@@ -172,6 +186,7 @@ def run_operational(
     configure_logging(settings.log_level)
     QQuickStyle.setStyle("Basic")
     application = QGuiApplication(["rfid-reader-qt"])
+    _configure_application_icon(application)
     application.setApplicationName("DSV RFID")
     application.setOrganizationName("DSV")
     runtime = ApplicationRuntime(settings, path)
