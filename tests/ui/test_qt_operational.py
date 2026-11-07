@@ -86,7 +86,7 @@ class Rig:
         self.bridge = OperationalBridge(self.runtime, PrototypeTheme.CORPORATE)
         self.configuration = ConfigurationBridge(self.settings, path, self.runtime)
         self.runtime.start()
-        wait_for(lambda: self.bridge.startEnabled)
+        wait_for(lambda: self.bridge.automaticEnabled)
 
     def timer(self, seconds: float, callback: Callable[[], None]) -> Timer:
         timer = Timer(seconds, callback)
@@ -329,7 +329,7 @@ def test_postgresql_health_failure_updates_system_and_preserves_readiness(rig: R
         "Sistema",
     ]
     rig.backend.system = rig.backend.database = "ok"
-    wait_for(lambda: rig.bridge.startEnabled)
+    wait_for(lambda: rig.bridge.automaticEnabled)
     wait_for(
         lambda: rig.runtime.statuses().get(ConnectionKind.DATABASE) is ConnectionStatus.CONNECTED
     )
@@ -486,8 +486,6 @@ def test_qml_operational_buttons_diagnostic_and_configuration(rig: Rig) -> None:
         QTest.qWait(50)
         reading_control = window.findChild(QObject, "readingControl")
         assert reading_control.property("enabled")
-        reading_control.clicked.emit()
-        wait_for(lambda: rig.bridge.automaticEnabled)
         assert reading_control.property("text") == "Parar leitura"
         assert reading_control.property("enabled")
         assert rig.reader.starts == 0
@@ -565,6 +563,11 @@ def test_slow_llrp_does_not_block_qt_slots_or_event_delivery(
 
 def test_configuration_tests_reuse_live_services_and_refuse_reader_during_auto(rig: Rig) -> None:
     original_reader = rig.runtime.reader
+    assert rig.configuration.testReader("Teste", "reader.test", "5084")
+    wait_for(lambda: not rig.configuration.busy)
+    assert rig.configuration.feedback["reader"]["state"] == "error"
+    rig.bridge.requestStop()
+    wait_for(lambda: not rig.bridge.automaticEnabled)
     assert rig.configuration.testReader("Teste", "reader.test", "5084")
     wait_for(lambda: not rig.configuration.busy)
     assert rig.configuration.feedback["reader"]["state"] == "ok"
