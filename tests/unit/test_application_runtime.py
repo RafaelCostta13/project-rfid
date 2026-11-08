@@ -9,7 +9,13 @@ from unittest.mock import patch
 import pytest
 
 from rfid_reader.config import load_config
-from rfid_reader.domain import ConnectionKind, ConnectionStatus, InventoryStatus, TagRead
+from rfid_reader.domain import (
+    ConnectionKind,
+    ConnectionStatus,
+    InventorySessionCompleted,
+    InventoryStatus,
+    TagRead,
+)
 from rfid_reader.readers.base import ReaderConnectionError
 from rfid_reader.runtime import (
     ApplicationRuntime,
@@ -173,6 +179,34 @@ def test_runtime_unsubscribe_detaches_consumer(runtime: ApplicationRuntime) -> N
     runtime.start()
     wait_until(lambda: runtime.automatic.ready)
     assert not events
+
+
+def test_controlled_sensor_stop_publishes_session_completion(runtime: ApplicationRuntime) -> None:
+    events: list[RuntimeEvent] = []
+    runtime.subscribe(events.append)
+    runtime.start()
+    wait_until(lambda: runtime.automatic.ready)
+    assert runtime.start_automatic()
+    wait_until(lambda: runtime.automatic.enabled)
+    runtime.automatic.update((True, True, False, True, False), lambda channel, state: state)
+    runtime.automatic.update((False, True, False, True, False), lambda channel, state: state)
+    wait_until(lambda: runtime.inventory.status is InventoryStatus.READING)
+    runtime.automatic.update((False, False, False, True, False), lambda channel, state: state)
+    wait_until(
+        lambda: any(
+            event.channel == "session_completed"
+            and isinstance(event.value, InventorySessionCompleted)
+            for event in events
+        )
+    )
+    completed = next(
+        event.value
+        for event in events
+        if event.channel == "session_completed"
+        and isinstance(event.value, InventorySessionCompleted)
+    )
+    assert completed.reason == "exit_sensor_interrupted"
+    assert completed.found_count == 0
 
 
 def test_shutdown_failure_does_not_leave_other_workers_alive(

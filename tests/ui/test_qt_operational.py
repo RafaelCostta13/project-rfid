@@ -14,7 +14,12 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
 
 from rfid_reader.config import load_config
-from rfid_reader.domain import ConnectionKind, ConnectionStatus, InventoryStatus
+from rfid_reader.domain import (
+    ConnectionKind,
+    ConnectionStatus,
+    InventorySessionCompleted,
+    InventoryStatus,
+)
 from rfid_reader.integrations.backend_client import BackendRFIDClient
 from rfid_reader.runtime import (
     ApplicationRuntime,
@@ -159,6 +164,78 @@ def test_full_cycle_updates_qml_table_counter_and_preserves_relays(rig: Rig) -> 
     assert rig.reader.connections == 1 and rig.port.opens == 1
     assert rig.backend.count("GET") == rig.backend.count("POST") == 1
     assert all(channel <= 3 for channel, enabled in rig.port.writes)
+
+
+def test_simulation_isolated_from_runtime_and_restores_presentation(rig: Rig) -> None:
+    rig.bridge.requestStop()
+    wait_for(lambda: not rig.bridge.automaticEnabled)
+    requested: list[object] = []
+    announced: list[int] = []
+    rig.bridge._audio._player = requested.append
+    rig.bridge._simulation_completion_notifier = lambda count: announced.append(count) or True
+
+    assert rig.bridge.startSimulation()
+    assert rig.bridge.simulationActive
+    for _ in range(10):
+        assert rig.bridge.simulateFound()
+    for _ in range(5):
+        assert rig.bridge.simulateExtraBox()
+    assert rig.bridge.foundCount == rig.bridge.simulationFoundCount == 10
+    assert rig.bridge.extraBoxCount == rig.bridge.simulationExtraBoxCount == 5
+    assert rig.bridge.tagModel.rowCount() == rig.bridge.simulationTagModel.rowCount() == 15
+    assert rig.backend.count("GET") == rig.backend.count("POST") == 0
+    assert rig.reader.starts == 0
+    assert len(requested) == 1
+
+    rig.bridge.finishSimulation()
+    assert not rig.bridge.simulationActive
+    assert rig.bridge.simulationPresenting
+    assert announced == [10]
+    rig.bridge.closeSimulation()
+    assert not rig.bridge.simulationPresenting
+    assert announced == [10]
+    assert rig.bridge.foundCount == rig.bridge.extraBoxCount == 0
+
+
+def test_normal_session_completion_announces_found_count_once(rig: Rig) -> None:
+    announced: list[int] = []
+    rig.bridge._operational_completion_notifier = lambda count: announced.append(count) or True
+    completed = InventorySessionCompleted(7, "timeout_60_seconds", 3)
+
+    rig.bridge.eventReceived.emit(RuntimeEvent("session_completed", completed))
+    rig.bridge.eventReceived.emit(RuntimeEvent("session_completed", completed))
+
+    wait_for(lambda: announced == [3])
+
+
+def test_simulator_modal_shares_metrics_and_table_model(rig: Rig) -> None:
+    messages: list[str] = []
+    handler = qInstallMessageHandler(lambda kind, context, message: messages.append(message))
+    engine, window = create_engine(rig.bridge, rig.configuration, diagnostic_bridge=rig.bridge)
+    try:
+        window.show()
+        rig.bridge.requestStop()
+        wait_for(lambda: not rig.bridge.automaticEnabled)
+        window.findChild(QObject, "settingsNavigation").clicked.emit()
+        window.findChild(QObject, "rfidSimulatorButton").clicked.emit()
+        wait_for(lambda: window.findChild(QObject, "rfidSimulator").property("visible"))
+        table = window.findChild(QObject, "simulationTagTable")
+        assert table is not None
+        assert table.property("tableModel") is rig.bridge.simulationTagModel
+        window.findChild(QObject, "simulationStartButton").clicked.emit()
+        wait_for(lambda: rig.bridge.simulationActive)
+        window.findChild(QObject, "simulationFoundButton").clicked.emit()
+        window.findChild(QObject, "simulationExtraButton").clicked.emit()
+        wait_for(lambda: rig.bridge.simulationTagModel.rowCount() == 2)
+        assert window.findChild(QObject, "simulationFoundCount").property("text") == "1"
+        assert window.findChild(QObject, "simulationExtraBoxCount").property("text") == "1"
+        assert rig.bridge.simulationTagModel.columnCount() == 7
+        assert not messages, "\n".join(messages)
+    finally:
+        window.close()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        qInstallMessageHandler(handler)
 
 
 @pytest.mark.parametrize("status", [404, 500, "timeout"])

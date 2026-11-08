@@ -34,6 +34,8 @@ DEFAULT_SYNC_CHECK_INTERVAL_SECONDS = 60.0
 DEFAULT_LOCAL_DATABASE_FILENAME = "rfid-reader.sqlite3"
 DEFAULT_BACKEND_BASE_URL = ""
 DEFAULT_EPC_FILTER_ENABLED = True
+DEFAULT_AUDIO_ENABLED = True
+DEFAULT_AUDIO_INTERVAL_MS = 300
 DEFAULT_EPC_ALLOWED_PREFIXES = (
     "445543",
     "474143",
@@ -109,6 +111,8 @@ class Settings:
     backend_base_url: str = DEFAULT_BACKEND_BASE_URL
     epc_filter_enabled: bool = DEFAULT_EPC_FILTER_ENABLED
     epc_allowed_prefixes: tuple[str, ...] = DEFAULT_EPC_ALLOWED_PREFIXES
+    audio_enabled: bool = DEFAULT_AUDIO_ENABLED
+    audio_interval_ms: int = DEFAULT_AUDIO_INTERVAL_MS
 
     @property
     def reader_connection(self) -> ReaderConnectionSettings:
@@ -485,6 +489,13 @@ def _epc_allowed_prefixes(environment: Mapping[str, str]) -> tuple[str, ...]:
         raise ConfigurationError(f"RFID_EPC_ALLOWED_PREFIXES: {error}") from error
 
 
+def _audio_interval(environment: Mapping[str, str]) -> int:
+    interval = _integer(environment, "RFID_AUDIO_INTERVAL_MS", DEFAULT_AUDIO_INTERVAL_MS)
+    if not 200 <= interval <= 1000:
+        raise ConfigurationError("RFID_AUDIO_INTERVAL_MS deve estar entre 200 e 1000")
+    return interval
+
+
 def load_config(environment: Mapping[str, str] | None = None) -> Settings:
     """Carrega e valida configurações de um mapeamento ou do ambiente do processo."""
 
@@ -538,4 +549,6 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
         backend_base_url=source.get("RFID_BACKEND_BASE_URL", "").strip(),
         epc_filter_enabled=epc_filter_enabled,
         epc_allowed_prefixes=epc_allowed_prefixes,
+        audio_enabled=_boolean(source, "RFID_AUDIO_ENABLED", DEFAULT_AUDIO_ENABLED),
+        audio_interval_ms=_audio_interval(source),
     )

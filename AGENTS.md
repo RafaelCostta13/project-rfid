@@ -312,10 +312,9 @@ Ao receber uma funcionalidade:
 6. Criar ou atualizar testes.
 7. Executar lint, formatação, tipos e testes.
 8. Revisar o diff.
-9. Atualizar documentação somente quando o comportamento ou uso mudar.
-10. Resumir o que foi alterado e os testes executados.
-
-Não criar ADR para toda funcionalidade. Criar ADR apenas quando houver uma decisão arquitetural relevante, difícil de reverter ou com alternativas importantes.
+9. Registrar uma ADR para toda funcionalidade implementada, inclusive alterações visuais; a ADR deve resumir o contexto, a decisão e suas consequências.
+10. Atualizar documentação adicional somente quando o comportamento ou uso mudar.
+11. Resumir o que foi alterado e os testes executados.
 
 ---
 

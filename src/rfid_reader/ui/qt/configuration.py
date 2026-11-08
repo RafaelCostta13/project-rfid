@@ -28,6 +28,12 @@ from rfid_reader.services.reader_configuration import (
     ReaderConfigurationService,
 )
 from rfid_reader.services.station_configuration import StationConfigurationService
+from rfid_reader.services.voice_notification import (
+    VoiceNotificationEvent,
+    VoiceNotificationService,
+    VoiceNotificationState,
+    voice_message,
+)
 from rfid_reader.services.waveshare_configuration import (
     DotEnvWaveshareConfigurationStore,
     WaveshareConfigurationService,
@@ -52,6 +58,8 @@ class ConfigurationBridge(QObject):
     changed = Signal()
     finished = Signal(str, bool, arguments=["section", "success"])
     feedbackReceived = Signal(object)
+    audioSettingsChanged = Signal(bool, int)
+    voiceEventReceived = Signal(object)
 
     def __init__(
         self, settings: Settings, path: Path, runtime: ApplicationRuntime | None = None
@@ -61,6 +69,12 @@ class ConfigurationBridge(QObject):
         self._closed = False
         self._feedback: dict[str, dict[str, str]] = {}
         self._runtime = runtime
+        self._audio_enabled = settings.audio_enabled
+        self._audio_interval_ms = settings.audio_interval_ms
+        self._store = DotEnvReaderConfigurationStore(path)
+        self._voice_testing = False
+        self._voice_feedback = {"state": "", "message": ""}
+        self._voice = VoiceNotificationService(self.voiceEventReceived.emit)
         self._unsubscribe: Callable[[], None] = lambda: None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qt-configuration")
         if runtime is None:
@@ -82,6 +96,7 @@ class ConfigurationBridge(QObject):
             self._epc_filter = runtime.epc_filter_configuration
             self._unsubscribe = runtime.subscribe(self._runtime_feedback)
         self.feedbackReceived.connect(self._apply_feedback, Qt.ConnectionType.QueuedConnection)
+        self.voiceEventReceived.connect(self._apply_voice_event, Qt.ConnectionType.QueuedConnection)
 
     def _get_fields(self) -> dict[str, object]:
         reader, waveshare = self._reader.current(), self._waveshare.current()
@@ -99,6 +114,8 @@ class ConfigurationBridge(QObject):
             "backend_url": self._backend.current(),
             "epc_filter_enabled": self._epc_filter.current().enabled,
             "epc_prefixes": self._epc_filter.prefixes(),
+            "audio_enabled": self._audio_enabled,
+            "audio_interval_ms": self._audio_interval_ms,
         }
 
     def _get_busy(self) -> bool:
@@ -110,6 +127,8 @@ class ConfigurationBridge(QObject):
     fields = Property(dict, _get_fields, notify=changed)
     busy = Property(bool, _get_busy, notify=changed)
     feedback = Property(dict, _get_feedback, notify=changed)
+    voiceTesting = Property(bool, lambda self: self._voice_testing, notify=changed)
+    voiceFeedback = Property(dict, lambda self: dict(self._voice_feedback), notify=changed)
     dockSuggestions = Property(list, lambda self: ["", *STATION_DOCK_SUGGESTIONS], constant=True)
     testsAvailable = Property(bool, lambda self: self._runtime is not None, constant=True)
 
@@ -152,6 +171,32 @@ class ConfigurationBridge(QObject):
         }
         self.changed.emit()
         self.finished.emit(event.section, event.success)
+        if event.section == "audio" and event.success:
+            self.audioSettingsChanged.emit(self._audio_enabled, self._audio_interval_ms)
+
+    @Slot(object)
+    def _apply_voice_event(self, event: object) -> None:
+        if self._closed or not isinstance(event, VoiceNotificationEvent):
+            return
+        self._voice_testing = event.state is VoiceNotificationState.STARTED
+        self._voice_feedback = {
+            "state": "error" if event.state is VoiceNotificationState.ERROR else "ok",
+            "message": event.message,
+        }
+        self.changed.emit()
+
+    @Slot(int, result=str)
+    def voiceMessage(self, quantity: int) -> str:
+        try:
+            return voice_message(quantity)
+        except ValueError:
+            return "Quantidade inválida"
+
+    @Slot(int, result=bool)
+    def testVoice(self, quantity: int) -> bool:
+        if self._closed or self._voice_testing:
+            return False
+        return self._voice.speak(quantity)
 
     def _submit(self, section: str, values: tuple[str, ...]) -> bool:
         if self._closed or self._busy:
@@ -194,7 +239,21 @@ class ConfigurationBridge(QObject):
                 prefixes = tuple(value for value in values[1].split(",") if value)
                 success, message = self._epc_filter.save(enabled, prefixes)
                 self.feedbackReceived.emit(ConfigurationFeedback(section, success, message))
-        except EpcFilterValidationError as error:
+            elif section == "audio":
+                interval = int(values[1])
+                if not 200 <= interval <= 1000:
+                    raise ValueError("intervalo inválido")
+                self._store.save_values(
+                    {"RFID_AUDIO_ENABLED": values[0], "RFID_AUDIO_INTERVAL_MS": str(interval)}
+                )
+                self._audio_enabled = values[0] == "true"
+                self._audio_interval_ms = interval
+                self.feedbackReceived.emit(
+                    ConfigurationFeedback(
+                        section, True, "Configurações de áudio salvas com sucesso."
+                    )
+                )
+        except (EpcFilterValidationError, ValueError) as error:
             self.feedbackReceived.emit(ConfigurationFeedback(section, False, str(error)))
         except Exception as error:
             # Fronteira worker/UI: evita Future silencioso e nunca registra valores do formulário.
@@ -235,6 +294,10 @@ class ConfigurationBridge(QObject):
     def saveEpcFilter(self, enabled: bool, prefixes: list[object]) -> bool:
         values = tuple(str(prefix) for prefix in prefixes)
         return self._submit("epc_filter", ("true" if enabled else "false", ",".join(values)))
+
+    @Slot(bool, int, result=bool)
+    def saveAudio(self, enabled: bool, interval_ms: int) -> bool:
+        return self._submit("audio", ("true" if enabled else "false", str(interval_ms)))
 
     def _submit_test(self, section: str, values: tuple[str, ...]) -> bool:
         if self._closed or self._busy or self._runtime is None:
@@ -289,6 +352,7 @@ class ConfigurationBridge(QObject):
     @Slot()
     def beginClose(self) -> None:
         self._closed = True
+        self._voice.close()
         self._unsubscribe()
 
     def close(self) -> None:

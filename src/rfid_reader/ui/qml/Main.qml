@@ -60,6 +60,7 @@ ApplicationWindow {
                 StatusPage { uiBridge: window.uiBridge }
                 SettingsPage {
                     id: settingsPage
+                    uiBridge: window.uiBridge
                     settingsBridge: window.settingsBridge
                     diagnosticBridge: window.diagnosticBridge
                     onDiagnosticRequested: window.navigate("diagnostic")

@@ -16,7 +16,7 @@ Item {
             MetricCard {
                 Layout.fillWidth: true
                 count: page.uiBridge.foundCount
-                title: "EPCs encontrados"
+                title: "Box encontrado"
                 accentColor: Theme.success
             }
             MetricCard {

@@ -68,6 +68,7 @@ class TagLookupService:
         self._closed = False
         self._seen: set[TagLookupKey] = set()
         self._processed_epcs: set[str] = set()
+        self._found_epcs_by_session: dict[int, set[str]] = {}
         self._epc_filter_provider = epc_filter_provider or (lambda: EpcFilterState(False, ()))
         self._epc_filter = EpcFilterState(False, ())
         self._worker = threading.Thread(
@@ -87,6 +88,13 @@ class TagLookupService:
                 return
             self._started = True
             self._worker.start()
+
+    @property
+    def session_id(self) -> int:
+        """Expõe o identificador da sessão corrente sem revelar a fila interna."""
+
+        with self._lock:
+            return self._session_id
 
     def start_session(self) -> int:
         """Reinicia a deduplicação e invalida resultados da sessão anterior."""
@@ -117,6 +125,15 @@ class TagLookupService:
 
         with self._lock:
             self._accepting = False
+
+    def complete_session(self, session_id: int) -> int | None:
+        """Aguarda consultas aceitas e retorna o total confirmado de EPCs encontrados."""
+
+        self._queue.join()
+        with self._lock:
+            if self._closed:
+                return None
+            return len(self._found_epcs_by_session.pop(session_id, set()))
 
     def submit(self, tag: TagRead) -> bool:
         """Agenda uma consulta sem bloquear a thread que entregou a leitura."""
@@ -226,6 +243,9 @@ class TagLookupService:
             task.key.epc,
             read_result.status,
         )
+        with self._lock:
+            if not self._closed:
+                self._found_epcs_by_session.setdefault(task.session_id, set()).add(task.key.epc)
         self._emit(
             TagLookupChanged(
                 task.session_id,

@@ -27,6 +27,15 @@ class InventoryStatusChanged:
 
 
 @dataclass(frozen=True, slots=True)
+class InventorySessionCompleted:
+    """Resume uma sessão encerrada normalmente após classificar suas etiquetas."""
+
+    session_id: int
+    reason: str
+    found_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class TagReceived:
     """Entrega uma etiqueta recebida durante o inventário atual."""
 

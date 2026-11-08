@@ -47,8 +47,12 @@ class Rig:
         self.relays = {channel: False for channel in range(1, 4)}
         self.calls: list[tuple[int, bool]] = []
         self.mode_events: list[bool] = []
+        self.cycle_finished: list[str] = []
         self.controller = AutomaticInventoryController(
-            self.inventory, self.timer, self.mode_events.append
+            self.inventory,
+            self.timer,
+            self.mode_events.append,
+            self.cycle_finished.append,
         )
         self.set_all_statuses(ConnectionStatus.CONNECTED)
         assert self.controller.enable()
@@ -118,6 +122,7 @@ def test_timeout_stops_and_requires_clear_beams() -> None:
     assert rig.inventory.stops == 1
     assert rig.relays == {1: True, 2: False, 3: False}
     assert rig.timers[0].cancelled
+    assert rig.cycle_finished == ["timeout_60_seconds"]
     rig.update(False, False)
     assert rig.relays[1]
     rig.update(True, True)
@@ -150,6 +155,21 @@ def test_manual_controls_and_waveshare_shutdown_cancel_cycle() -> None:
     rig.update(False, True)
     assert rig.inventory.stops == 1
     assert rig.mode_events == [True, False]
+    assert rig.cycle_finished == ["automatic_disabled"]
+
+
+def test_exit_sensor_announces_completion_but_operational_failure_does_not() -> None:
+    rig = Rig()
+    rig.update(True, True)
+    rig.update(False, True)
+    rig.update(False, False)
+    assert rig.cycle_finished == ["exit_sensor_interrupted"]
+
+    rig = Rig()
+    rig.update(True, True)
+    rig.update(False, True)
+    rig.controller.update_connection_status(ConnectionKind.RFID, ConnectionStatus.ERROR)
+    assert rig.cycle_finished == []
 
 
 def test_exit_without_cycle_and_simultaneous_beams_do_not_start() -> None:

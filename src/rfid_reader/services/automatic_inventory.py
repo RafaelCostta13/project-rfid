@@ -53,10 +53,12 @@ class AutomaticInventoryController:
         inventory: InventoryPort,
         timer_factory: Callable[[float, Callable[[], None]], CycleTimer] = create_timer,
         mode_listener: Callable[[bool], None] = lambda enabled: None,
+        cycle_finished_listener: Callable[[str], None] = lambda reason: None,
     ) -> None:
         self._inventory = inventory
         self._timer_factory = timer_factory
         self._mode_listener = mode_listener
+        self._cycle_finished_listener = cycle_finished_listener
         self._lock = threading.RLock()
         self._statuses = {kind: ConnectionStatus.CHECKING for kind in ConnectionKind}
         self._backend_observed = False
@@ -185,6 +187,12 @@ class AutomaticInventoryController:
         stopped = self._inventory.stop()
         if not stopped:
             LOGGER.error("automatic_inventory_stop_failed reason=%s", reason)
+        elif not self._closed and reason in {
+            "automatic_disabled",
+            "exit_sensor_interrupted",
+            "timeout_60_seconds",
+        }:
+            self._cycle_finished_listener(reason)
         return stopped
 
     def _expire(self, generation: int) -> None:

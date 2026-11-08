@@ -40,6 +40,7 @@ rfid_reader = [
     "ui/qml/theme/*.qml",
     "ui/qml/theme/qmldir",
     "ui/qml/assets/branding/*.svg",
+    "ui/qml/assets/sounds/*.wav",
 ]
 
 [tool.ruff]

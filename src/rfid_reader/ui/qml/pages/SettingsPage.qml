@@ -8,6 +8,7 @@ ScrollView {
     id: page
     objectName: "settingsPage"
     property var settingsBridge: null
+    property var uiBridge: null
     property var diagnosticBridge: null
     property var epcPrefixDrafts: []
     signal diagnosticRequested()
@@ -40,6 +41,10 @@ ScrollView {
             epcFilterEnabled.checked = fields.epc_filter_enabled;
             epcPrefixDrafts = fields.epc_prefixes;
         }
+        if (section === "all" || section === "audio") {
+            audioEnabled.checked = fields.audio_enabled;
+            audioInterval.value = fields.audio_interval_ms;
+        }
     }
     Component.onCompleted: refresh("all")
     Connections {
@@ -58,12 +63,15 @@ ScrollView {
             Layout.fillWidth: true
         }
         GridLayout {
+            id: settingsGrid
+            objectName: "settingsGrid"
             columns: page.availableWidth >= 850 ? 2 : 1
             Layout.fillWidth: true
             columnSpacing: Theme.spacing
             rowSpacing: Theme.spacing
             SettingsCard {
-                title: "Configurações do RFID"
+                objectName: "readerSettingsCard"
+                title: "Configurações RFID"
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignTop
                 FormField { id: readerName; fieldName: "readerNameField"; label: "Nome do reader"; enabled: !page.isBusy; Layout.fillWidth: true }
@@ -84,33 +92,24 @@ ScrollView {
                     }
                 }
                 FeedbackText { objectName: "readerFeedback"; feedback: page.settingsBridge ? page.settingsBridge.feedback.reader : null; Layout.fillWidth: true }
-                AppText { text: "Doca da estação"; textStyle: "card" }
-                StyledComboBox {
-                    id: dock
-                    objectName: "dockField"
-                    editable: true
-                    model: page.settingsBridge ? page.settingsBridge.dockSuggestions : []
-                    enabled: !page.isBusy
-                    Layout.fillWidth: true
-                }
-                ActionButton {
-                    objectName: "dockSaveButton"
-                    text: "Salvar Doca"
-                    enabled: !page.isBusy
-                    onClicked: page.settingsBridge.saveStation(dock.editText)
-                }
-                FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.station : null; Layout.fillWidth: true }
             }
             SettingsCard {
+                objectName: "waveshareSettingsCard"
                 title: "Configurações da Waveshare"
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignTop
                 FormField { id: serialPort; fieldName: "serialPortField"; label: "Porta COM"; placeholderText: "Não configurada"; enabled: !page.isBusy; Layout.fillWidth: true }
                 FormField { id: baud; fieldName: "baudField"; label: "Baud rate"; enabled: !page.isBusy; Layout.fillWidth: true }
-                FormField { id: bits; fieldName: "bitsField"; label: "Data bits"; enabled: !page.isBusy; Layout.fillWidth: true }
-                FormField { id: parity; fieldName: "parityField"; label: "Paridade"; enabled: !page.isBusy; Layout.fillWidth: true }
-                FormField { id: stopBits; fieldName: "stopBitsField"; label: "Stop bits"; enabled: !page.isBusy; Layout.fillWidth: true }
-                FormField { id: device; fieldName: "deviceField"; label: "Device ID"; enabled: !page.isBusy; Layout.fillWidth: true }
+                GridLayout {
+                    columns: 2
+                    Layout.fillWidth: true
+                    columnSpacing: Theme.spacing
+                    rowSpacing: Theme.spacing
+                    FormField { id: bits; objectName: "bitsForm"; fieldName: "bitsField"; label: "Data bits"; enabled: !page.isBusy; Layout.fillWidth: true }
+                    FormField { id: parity; objectName: "parityForm"; fieldName: "parityField"; label: "Paridade"; enabled: !page.isBusy; Layout.fillWidth: true }
+                    FormField { id: stopBits; objectName: "stopBitsForm"; fieldName: "stopBitsField"; label: "Stop bits"; enabled: !page.isBusy; Layout.fillWidth: true }
+                    FormField { id: device; objectName: "deviceForm"; fieldName: "deviceField"; label: "Device ID"; enabled: !page.isBusy; Layout.fillWidth: true }
+                }
                 RowLayout {
                     Layout.fillWidth: true
                     ActionButton {
@@ -133,31 +132,49 @@ ScrollView {
                 FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.waveshare : null; Layout.fillWidth: true }
             }
             SettingsCard {
-                title: "Backend RFID"
-                Layout.columnSpan: parent.columns
-                Layout.row: page.availableWidth >= 850 ? 2 : 3
+                objectName: "audioSettingsCard"
+                title: "Configurações de Áudio"
                 Layout.fillWidth: true
-                FormField { id: backendUrl; fieldName: "backendUrlField"; label: "URL base"; enabled: !page.isBusy; Layout.fillWidth: true }
+                Layout.alignment: Qt.AlignTop
+                AppText { text: "Bip RFID"; textStyle: "card" }
+                CheckBox { id: audioEnabled; objectName: "audioEnabled"; text: "Som de leitura"; enabled: !page.isBusy }
                 RowLayout {
-                    ActionButton {
-                        text: "Testar conexão"; variant: "secondary"; objectName: "backendTestButton"
-                        enabled: !page.isBusy && page.settingsBridge.testsAvailable
-                        onClicked: page.settingsBridge.testBackend(backendUrl.text)
-                    }
-                    ActionButton {
-                        objectName: "backendSaveButton"
-                        text: "Salvar configurações"
-                        enabled: !page.isBusy
-                        onClicked: page.settingsBridge.saveBackend(backendUrl.text)
-                    }
+                    Layout.fillWidth: true
+                    AppText { text: "Intervalo entre bips (ms)"; Layout.fillWidth: true }
+                    SpinBox { id: audioInterval; objectName: "audioInterval"; from: 200; to: 1000; stepSize: 50; enabled: !page.isBusy && audioEnabled.checked }
                 }
-                FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.backend : null; Layout.fillWidth: true }
+                ActionButton { objectName: "audioSaveButton"; text: "Salvar áudio"; enabled: !page.isBusy; onClicked: page.settingsBridge.saveAudio(audioEnabled.checked, audioInterval.value) }
+                FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.audio : null; Layout.fillWidth: true }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.border }
+                AppText { text: "Notificação por voz"; textStyle: "card" }
+                AppText { text: "Voz: Microsoft Maria Desktop"; textStyle: "caption"; color: Theme.secondaryText }
+                AppText { text: "Idioma: Português (Brasil)"; textStyle: "caption"; color: Theme.secondaryText }
+                AppText { text: "Quantidade de caixas"; textStyle: "caption"; color: Theme.secondaryText }
+                SpinBox {
+                    id: voiceQuantity
+                    objectName: "voiceQuantity"
+                    from: 0; to: 9999; value: 10
+                    enabled: !page.settingsBridge.voiceTesting
+                    Layout.fillWidth: true
+                }
+                AppText {
+                    objectName: "voiceMessagePreview"
+                    text: page.settingsBridge ? "Mensagem: " + page.settingsBridge.voiceMessage(voiceQuantity.value) : ""
+                    textStyle: "caption"; color: Theme.secondaryText
+                }
+                ActionButton {
+                    objectName: "voiceTestButton"
+                    text: page.settingsBridge && page.settingsBridge.voiceTesting ? "Reproduzindo..." : "Testar voz"
+                    enabled: !!page.settingsBridge && !page.settingsBridge.voiceTesting
+                    onClicked: page.settingsBridge.testVoice(voiceQuantity.value)
+                }
+                FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.voiceFeedback : null; Layout.fillWidth: true }
             }
             SettingsCard {
-                title: "Filtro de EPC"
-                Layout.columnSpan: parent.columns
-                Layout.row: page.availableWidth >= 850 ? 1 : 2
+                objectName: "epcFilterSettingsCard"
+                title: "Filtro EPC"
                 Layout.fillWidth: true
+                Layout.alignment: Qt.AlignTop
                 CheckBox {
                     id: epcFilterEnabled
                     objectName: "epcFilterEnabled"
@@ -169,23 +186,33 @@ ScrollView {
                     textStyle: "caption"
                     color: Theme.secondaryText
                 }
-                ColumnLayout {
+                ScrollView {
+                    objectName: "epcPrefixList"
                     Layout.fillWidth: true
-                    Repeater {
-                        model: page.epcPrefixDrafts
-                        delegate: RowLayout {
-                            required property string modelData
-                            required property int index
-                            Layout.fillWidth: true
-                            AppText { text: modelData; Layout.fillWidth: true }
-                            ActionButton {
-                                text: "Remover"
-                                variant: "secondary"
-                                enabled: !page.isBusy
-                                onClicked: {
-                                    let values = page.epcPrefixDrafts.slice();
-                                    values.splice(index, 1);
-                                    page.epcPrefixDrafts = values;
+                    Layout.preferredHeight: 220
+                    Layout.maximumHeight: 220
+                    clip: true
+                    contentWidth: availableWidth
+                    ColumnLayout {
+                        width: parent.availableWidth
+                        spacing: 4
+                        Repeater {
+                            model: page.epcPrefixDrafts
+                            delegate: RowLayout {
+                                required property string modelData
+                                required property int index
+                                Layout.fillWidth: true
+                                AppText { text: modelData; textStyle: "caption"; Layout.fillWidth: true }
+                                ActionButton {
+                                    text: "Remover"
+                                    variant: "secondary"
+                                    implicitHeight: 32
+                                    enabled: !page.isBusy
+                                    onClicked: {
+                                        let values = page.epcPrefixDrafts.slice();
+                                        values.splice(index, 1);
+                                        page.epcPrefixDrafts = values;
+                                    }
                                 }
                             }
                         }
@@ -218,6 +245,57 @@ ScrollView {
                 }
                 FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.epc_filter : null; Layout.fillWidth: true }
             }
+            SettingsCard {
+                objectName: "dockSettingsCard"
+                title: "Doca Estação"
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignTop
+                AppText { text: "Selecionar doca"; textStyle: "caption"; color: Theme.secondaryText }
+                StyledComboBox {
+                    id: dock
+                    objectName: "dockField"
+                    editable: true
+                    model: page.settingsBridge ? page.settingsBridge.dockSuggestions : []
+                    enabled: !page.isBusy
+                    Layout.fillWidth: true
+                }
+                ActionButton {
+                    objectName: "dockSaveButton"
+                    text: "Salvar Doca"
+                    enabled: !page.isBusy
+                    onClicked: page.settingsBridge.saveStation(dock.editText)
+                }
+                FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.station : null; Layout.fillWidth: true }
+            }
+            SettingsCard {
+                objectName: "backendSettingsCard"
+                title: "Backend RFID"
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignTop
+                FormField { id: backendUrl; fieldName: "backendUrlField"; label: "URL base"; enabled: !page.isBusy; Layout.fillWidth: true }
+                RowLayout {
+                    ActionButton {
+                        text: "Testar conexão"; variant: "secondary"; objectName: "backendTestButton"
+                        enabled: !page.isBusy && page.settingsBridge.testsAvailable
+                        onClicked: page.settingsBridge.testBackend(backendUrl.text)
+                    }
+                    ActionButton {
+                        objectName: "backendSaveButton"
+                        text: "Salvar configurações"
+                        enabled: !page.isBusy
+                        onClicked: page.settingsBridge.saveBackend(backendUrl.text)
+                    }
+                }
+                FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.backend : null; Layout.fillWidth: true }
+            }
+            SettingsCard {
+                objectName: "testToolsSettingsCard"
+                title: "Ferramentas de Teste"
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignTop
+                AppText { text: "Simulador RFID"; textStyle: "caption"; color: Theme.secondaryText }
+                ActionButton { objectName: "rfidSimulatorButton"; text: "Simulador RFID"; iconName: "flask-conical"; enabled: !!page.uiBridge; onClicked: simulator.open() }
+            }
         }
         AppText {
             visible: !page.diagnosticBridge
@@ -226,6 +304,61 @@ ScrollView {
             color: Theme.mutedText
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
+        }
+    }
+    Popup {
+        id: simulator
+        objectName: "rfidSimulator"
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        anchors.centerIn: parent
+        width: Math.min(900, parent.width - 48)
+        height: Math.min(650, parent.height - 48)
+        padding: 20
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
+        onClosed: if (page.uiBridge) page.uiBridge.closeSimulation()
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
+            AppText { text: "Simulador RFID"; textStyle: "section" }
+            AppText { objectName: "simulatorState"; text: page.uiBridge && page.uiBridge.simulationActive ? "Simulação ativa" : page.uiBridge && page.uiBridge.simulationPresenting ? "Simulação finalizada" : "Sessão: Inativa"; textStyle: "caption"; color: Theme.secondaryText }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacing
+                MetricCard {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 96
+                    count: page.uiBridge && page.uiBridge.simulationFoundCount !== undefined ? page.uiBridge.simulationFoundCount : 0
+                    title: "EPCs encontrados"
+                    accentColor: Theme.success
+                    countObjectName: "simulationFoundCount"
+                }
+                MetricCard {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 96
+                    count: page.uiBridge && page.uiBridge.simulationExtraBoxCount !== undefined ? page.uiBridge.simulationExtraBoxCount : 0
+                    title: "Extra box"
+                    accentColor: Theme.extraBoxAccent
+                    countObjectName: "simulationExtraBoxCount"
+                }
+            }
+            AppText { text: "Registros simulados"; textStyle: "caption"; color: Theme.secondaryText }
+            StyledTable {
+                objectName: "simulationTagTable"
+                tableModel: page.uiBridge && page.uiBridge.simulationTagModel ? page.uiBridge.simulationTagModel : page.uiBridge.tagModel
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 180
+            }
+            ActionButton { objectName: "simulationStartButton"; text: "Iniciar sessão"; enabled: !!page.uiBridge && !page.uiBridge.simulationActive; onClicked: page.uiBridge.startSimulation() }
+            RowLayout {
+                Layout.fillWidth: true
+                ActionButton { objectName: "simulationFoundButton"; text: "EPC encontrado"; enabled: !!page.uiBridge && !!page.uiBridge.simulationActive; Layout.fillWidth: true; onClicked: page.uiBridge.simulateFound() }
+                ActionButton { objectName: "simulationExtraButton"; text: "Extra box"; variant: "secondary"; enabled: !!page.uiBridge && !!page.uiBridge.simulationActive; Layout.fillWidth: true; onClicked: page.uiBridge.simulateExtraBox() }
+            }
+            ActionButton { objectName: "simulationFinishButton"; text: "Finalizar sessão"; variant: "danger"; enabled: !!page.uiBridge && !!page.uiBridge.simulationActive; onClicked: page.uiBridge.finishSimulation() }
         }
     }
 }

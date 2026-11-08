@@ -190,8 +190,16 @@ def run_operational(
     application.setApplicationName("DSV RFID")
     application.setOrganizationName("DSV")
     runtime = ApplicationRuntime(settings, path)
-    bridge = OperationalBridge(runtime, theme)
     configuration = ConfigurationBridge(settings, path, runtime)
+    bridge = OperationalBridge(
+        runtime,
+        theme,
+        audio_enabled=settings.audio_enabled,
+        audio_interval_ms=settings.audio_interval_ms,
+        simulation_completion_notifier=configuration.testVoice,
+        operational_completion_notifier=configuration.testVoice,
+    )
+    configuration.audioSettingsChanged.connect(bridge.setAudioSettings)
     # O bootstrap ocorre somente depois de o QML carregar com sucesso.
     QTimer.singleShot(0, runtime.start)
     application.aboutToQuit.connect(bridge.beginClose)

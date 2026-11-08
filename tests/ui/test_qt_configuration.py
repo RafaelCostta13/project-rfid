@@ -99,6 +99,37 @@ def test_backend_keeps_existing_trim_only_validation(configuration: Configuratio
     assert configuration.property("fields")["backend_url"] == ""
 
 
+def test_audio_preferences_are_persisted_and_emitted(configuration: ConfigurationBridge) -> None:
+    updates: list[tuple[bool, int]] = []
+    configuration.audioSettingsChanged.connect(
+        lambda enabled, interval: updates.append((enabled, interval))
+    )
+
+    save_and_wait(configuration, lambda: configuration.saveAudio(False, 450))
+
+    assert configuration.property("fields")["audio_enabled"] is False
+    assert configuration.property("fields")["audio_interval_ms"] == 450
+    assert updates == [(False, 450)]
+
+
+def test_voice_preview_and_test_are_isolated_from_configuration_workers(
+    configuration: ConfigurationBridge,
+) -> None:
+    calls: list[tuple[tuple[str, ...], str]] = []
+
+    def runner(command: tuple[str, ...], message: str) -> int:
+        calls.append((command, message))
+        return 0
+
+    configuration._voice._runner = runner
+    assert configuration.voiceMessage(1) == "Passou 1 caixa"
+    assert configuration.voiceMessage(10) == "Passou 10 caixas"
+    assert configuration.testVoice(10)
+    wait_for(lambda: configuration.voiceFeedback["message"] == "Notificação por voz concluída.")
+    assert calls and calls[0][1] == "Passou 10 caixas"
+    assert not configuration.voiceTesting
+
+
 @pytest.mark.parametrize("section", ["reader", "waveshare", "station", "backend"])
 def test_io_failure_does_not_update_memory_or_original_file(
     section: str,
@@ -267,6 +298,53 @@ def test_configuration_qml_loads_and_saves_without_operations(
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         bridge.close()
         qInstallMessageHandler(old_handler)
+
+
+@pytest.mark.parametrize(("width", "expected_columns"), [(1366, 2), (910, 1)])
+def test_settings_layout_groups_cards_and_adapts_columns(
+    width: int, expected_columns: int, configuration: ConfigurationBridge
+) -> None:
+    bridge = ConnectionBridge()
+    engine, window = create_engine(bridge, configuration, initial_page="settings")
+    try:
+        window.resize(width, 768)
+        window.show()
+        QTest.qWait(30)
+        grid = window.findChild(QQuickItem, "settingsGrid")
+        assert grid.property("columns") == expected_columns
+        for name in (
+            "readerSettingsCard",
+            "waveshareSettingsCard",
+            "dockSettingsCard",
+            "audioSettingsCard",
+            "testToolsSettingsCard",
+            "epcFilterSettingsCard",
+            "backendSettingsCard",
+        ):
+            assert window.findChild(QQuickItem, name) is not None
+        prefix_list = window.findChild(QQuickItem, "epcPrefixList")
+        assert prefix_list.height() <= 220
+        if expected_columns == 2:
+            audio = window.findChild(QQuickItem, "audioSettingsCard")
+            epc_filter = window.findChild(QQuickItem, "epcFilterSettingsCard")
+            dock = window.findChild(QQuickItem, "dockSettingsCard")
+            backend = window.findChild(QQuickItem, "backendSettingsCard")
+            assert audio.y() == epc_filter.y()
+            assert dock.y() == backend.y()
+            assert audio.x() != epc_filter.x()
+            assert dock.x() != backend.x()
+            bits = window.findChild(QQuickItem, "bitsForm")
+            parity = window.findChild(QQuickItem, "parityForm")
+            stop_bits = window.findChild(QQuickItem, "stopBitsForm")
+            device = window.findChild(QQuickItem, "deviceForm")
+            assert bits.y() == parity.y()
+            assert stop_bits.y() == device.y()
+            assert bits.x() != parity.x()
+    finally:
+        window.close()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        bridge.close()
 
 
 def test_dock_combo_accepts_keyboard_custom_value(configuration: ConfigurationBridge) -> None:

@@ -1,10 +1,13 @@
 """Apresentação Qt dos eventos do runtime; nenhuma regra RFID vive na UI."""
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Property, QObject, Qt, Signal, Slot
 
 from rfid_reader.domain import (
     ConnectionKind,
     ConnectionStatus,
+    InventorySessionCompleted,
     InventoryStatus,
     InventoryStatusChanged,
     TagLookupChanged,
@@ -15,8 +18,10 @@ from rfid_reader.domain import (
 from rfid_reader.runtime import ApplicationRuntime, CommandFinished, RuntimeEvent
 from rfid_reader.services.automatic_inventory import OPERATIONAL_CONNECTIONS
 from rfid_reader.services.waveshare_diagnostic import DiagnosticEvent, DiagnosticEventKind
+from rfid_reader.ui.qt.audio import AudioNotificationService
 from rfid_reader.ui.qt.mock_data import PrototypeTheme
 from rfid_reader.ui.qt.models import TagTableModel
+from rfid_reader.ui.qt.simulation import simulated_result
 from rfid_reader.ui.qt.status_bridge import CONNECTION_LABELS, STATE_COLORS
 
 
@@ -24,12 +29,22 @@ class OperationalBridge(QObject):
     changed = Signal()
     eventReceived = Signal(object)
 
-    def __init__(self, runtime: ApplicationRuntime, theme: PrototypeTheme) -> None:
+    def __init__(
+        self,
+        runtime: ApplicationRuntime,
+        theme: PrototypeTheme,
+        *,
+        audio_enabled: bool = True,
+        audio_interval_ms: int = 300,
+        simulation_completion_notifier: Callable[[int], bool] | None = None,
+        operational_completion_notifier: Callable[[int], bool] | None = None,
+    ) -> None:
         super().__init__()
         self._theme = theme
         self._closed = False
         self._states: dict[ConnectionKind, ConnectionStatus] = {}
         self._model = TagTableModel(self)
+        self._simulation_model = TagTableModel(self)
         self._summary = TagLookupSessionSummary()
         self.runtime = runtime
         self._inventory = runtime.inventory.status
@@ -41,6 +56,19 @@ class OperationalBridge(QObject):
         self._inputs: list[bool | None] = [None] * 5
         self._relays: list[bool | None] = [None] * 8
         self._session_id = 0
+        self._simulation_session_id = 0
+        self._simulation_sequence = 0
+        self._simulation_active = False
+        self._simulation_presenting = False
+        self._simulation_summary = TagLookupSessionSummary()
+        self._simulation_completion_notifier = simulation_completion_notifier
+        self._operational_completion_notifier = operational_completion_notifier
+        self._announced_operational_sessions: set[int] = set()
+        self._audio = AudioNotificationService(
+            enabled=audio_enabled,
+            interval_ms=audio_interval_ms,
+            parent=self,
+        )
         self.eventReceived.connect(self._apply_event, Qt.ConnectionType.QueuedConnection)
         self._unsubscribe = runtime.subscribe(self.eventReceived.emit)
         self._states.update(runtime.statuses())
@@ -57,7 +85,12 @@ class OperationalBridge(QObject):
 
     theme = Property(str, lambda self: self._theme.value, notify=changed)
     connections = Property(list, _get_connections, notify=changed)
-    tagModel = Property(QObject, lambda self: self._model, constant=True)
+    tagModel = Property(
+        QObject,
+        lambda self: self._simulation_model if self._simulation_presenting else self._model,
+        notify=changed,
+    )
+    simulationTagModel = Property(QObject, lambda self: self._simulation_model, constant=True)
     simulated = Property(bool, lambda self: False, constant=True)
     scenario = Property(str, lambda self: "", constant=True)
 
@@ -109,18 +142,32 @@ class OperationalBridge(QObject):
             return "Modo automático habilitado · aguardando DI1 ATIVA → DESATIVADA."
         return "Leitura desabilitada ou aguardando conexões operacionais."
 
+    def _active_summary(self) -> TagLookupSessionSummary:
+        return self._simulation_summary if self._simulation_presenting else self._summary
+
     bannerText = Property(str, lambda self: "OPERAÇÃO RFID", constant=True)
     operationState = Property(str, _operation_state, notify=changed)
     operationTitle = Property(str, _operation_title, notify=changed)
     operationDescription = Property(str, _operation_description, notify=changed)
-    foundCount = Property(int, lambda self: self._summary.total, notify=changed)
-    extraBoxCount = Property(int, lambda self: self._summary.extra_box_total, notify=changed)
+    foundCount = Property(int, lambda self: self._active_summary().total, notify=changed)
+    extraBoxCount = Property(
+        int, lambda self: self._active_summary().extra_box_total, notify=changed
+    )
+    simulationActive = Property(bool, lambda self: self._simulation_active, notify=changed)
+    simulationPresenting = Property(bool, lambda self: self._simulation_presenting, notify=changed)
+    simulationFoundCount = Property(
+        int, lambda self: self._simulation_summary.total, notify=changed
+    )
+    simulationExtraBoxCount = Property(
+        int, lambda self: self._simulation_summary.extra_box_total, notify=changed
+    )
     startEnabled = Property(
         bool,
         lambda self: (
             not self._closed
             and not self._command_pending
             and not self._automatic
+            and not self._simulation_active
             and self._ready()
             and self._inventory is not InventoryStatus.READING
         ),
@@ -149,6 +196,13 @@ class OperationalBridge(QObject):
                 self._states[kind] = status
         elif isinstance(value, InventoryStatusChanged):
             self._inventory = value.status
+        elif isinstance(value, InventorySessionCompleted):
+            if (
+                value.session_id not in self._announced_operational_sessions
+                and self._operational_completion_notifier is not None
+            ):
+                self._announced_operational_sessions.add(value.session_id)
+                self._operational_completion_notifier(value.found_count)
         elif event.channel == "automatic" and isinstance(value, bool):
             self._automatic = value
         elif isinstance(value, TagLookupSessionStarted):
@@ -156,11 +210,14 @@ class OperationalBridge(QObject):
             self._summary.reset()
             self._model.start_session(value.session_id)
             self._message = ""
+            self._audio.begin_session()
         elif isinstance(value, TagLookupChanged):
             if value.session_id != self._session_id:
                 return
             self._summary.update(value.result)
             self._model.upsert(value.result, value.session_id)
+            if value.result.status is TagLookupStatus.FOUND:
+                self._audio.request(value.result.epc)
             if value.result.status is TagLookupStatus.ERROR:
                 self._message = value.result.message
         elif isinstance(value, CommandFinished):
@@ -210,6 +267,70 @@ class OperationalBridge(QObject):
         if self.stopEnabled:
             self._command_pending = self.runtime.stop_automatic()
             self.changed.emit()
+            self._audio.cancel()
+
+    @Slot(bool, int)
+    def setAudioSettings(self, enabled: bool, interval_ms: int) -> None:
+        self._audio.configure(enabled, interval_ms)
+
+    @Slot(result=bool)
+    def startSimulation(self) -> bool:
+        if self._closed or self._inventory is InventoryStatus.READING or self._automatic:
+            self._message = "Finalize a leitura real antes de iniciar a simulação."
+            self.changed.emit()
+            return False
+        self._simulation_session_id += 1
+        self._simulation_sequence = 0
+        self._simulation_active = True
+        self._simulation_presenting = True
+        self._simulation_summary.reset()
+        self._simulation_model.start_session(self._simulation_session_id)
+        self._audio.begin_session()
+        self.changed.emit()
+        return True
+
+    def _add_simulation(self, extra_box: bool) -> bool:
+        if not self._simulation_active:
+            return False
+        self._simulation_sequence += 1
+        result = simulated_result(self._simulation_sequence, extra_box=extra_box)
+        self._simulation_summary.update(result)
+        self._simulation_model.upsert(result, self._simulation_session_id)
+        if not extra_box:
+            self._audio.request(result.epc)
+        self.changed.emit()
+        return True
+
+    @Slot(result=bool)
+    def simulateFound(self) -> bool:
+        return self._add_simulation(False)
+
+    @Slot(result=bool)
+    def simulateExtraBox(self) -> bool:
+        return self._add_simulation(True)
+
+    @Slot()
+    def finishSimulation(self) -> None:
+        self._finish_simulation(announce=True)
+
+    def _finish_simulation(self, *, announce: bool) -> None:
+        if not self._simulation_active:
+            return
+        found_count = self._simulation_summary.total
+        self._simulation_active = False
+        self._audio.cancel()
+        if announce and self._simulation_completion_notifier is not None:
+            self._simulation_completion_notifier(found_count)
+        self.changed.emit()
+
+    @Slot()
+    def closeSimulation(self) -> None:
+        self._finish_simulation(announce=False)
+        self._simulation_presenting = False
+        self._simulation_session_id += 1
+        self._simulation_summary.reset()
+        self._simulation_model.start_session(self._simulation_session_id)
+        self.changed.emit()
 
     @Slot()
     def connectDiagnostic(self) -> None:
@@ -238,5 +359,6 @@ class OperationalBridge(QObject):
         self.close()
 
     def close(self) -> None:
+        self._audio.close()
         self._unsubscribe()
         self._closed = True

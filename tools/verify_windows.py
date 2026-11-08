@@ -75,6 +75,7 @@ def main() -> int:
         assets / "Main.qml",
         assets / "pages" / "DiagnosticPage.qml",
         assets / "assets" / "branding" / "dsv_logo.svg",
+        assets / "assets" / "sounds" / "bip2.wav",
         bundle / "_internal" / "python312.dll",
         bundle / "_internal" / "PySide6" / "plugins" / "platforms" / "qwindows.dll",
     )

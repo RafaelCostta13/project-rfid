@@ -16,6 +16,7 @@ from rfid_reader.domain import (
     ConnectionStatus,
     InventoryCleared,
     InventoryEvent,
+    InventorySessionCompleted,
     InventoryStatus,
     InventoryStatusChanged,
     ReaderConfigurationFeedback,
@@ -156,7 +157,10 @@ class ApplicationRuntime:
         )
         self.inventory = ManualInventoryService(self.reader, self._on_inventory)
         self.automatic = AutomaticInventoryController(
-            self.inventory, deps.timer_factory, self._on_mode
+            self.inventory,
+            deps.timer_factory,
+            self._on_mode,
+            self._on_controlled_cycle_finished,
         )
         self.commands = ThreadPoolExecutor(max_workers=1, thread_name_prefix="application-command")
         self.reader_configuration = ReaderConfigurationService(
@@ -243,6 +247,19 @@ class ApplicationRuntime:
 
     def _on_mode(self, enabled: bool) -> None:
         self._publish("automatic", enabled)
+
+    def _on_controlled_cycle_finished(self, reason: str) -> None:
+        session_id = self.lookup.session_id
+
+        def complete_session() -> None:
+            found_count = self.lookup.complete_session(session_id)
+            if found_count is not None:
+                self._publish(
+                    "session_completed",
+                    InventorySessionCompleted(session_id, reason, found_count),
+                )
+
+        self.submit("session_completion", complete_session)
 
     def _on_reader_config(self, event: ReaderConfigurationFeedback) -> None:
         self._publish("reader_configuration", event)
