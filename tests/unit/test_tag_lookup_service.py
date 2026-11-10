@@ -188,6 +188,26 @@ def test_found_epc_executes_one_get_and_one_post_in_session(tmp_path: Path) -> N
         service.close()
 
 
+def test_resume_session_preserves_deduplication_and_counts_new_epcs(tmp_path: Path) -> None:
+    events: list[TagLookupEvent] = []
+    service = TagLookupService(
+        lambda: LocalCompatibilityClient(repository(tmp_path), "D01"), 10, events.append
+    )
+    try:
+        session_id = service.start_session()
+        assert service.submit(tag(EPC_01))
+        wait_until(lambda: len(completed(events, EPC_01)) == 1)
+        service.stop_accepting()
+        service.resume_session()
+        assert not service.submit(tag(EPC_01, 2))
+        assert service.submit(tag(EPC_02))
+        wait_until(lambda: len(completed(events, EPC_02)) == 1)
+        assert service.session_id == session_id
+        assert service.complete_session(session_id) == 2
+    finally:
+        service.close()
+
+
 def test_complete_session_returns_only_confirmed_found_epcs(tmp_path: Path) -> None:
     events: list[TagLookupEvent] = []
     service = TagLookupService(

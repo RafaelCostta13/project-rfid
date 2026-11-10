@@ -39,7 +39,11 @@ ComboBox {
         width: control.width
         implicitHeight: 38
         highlighted: control.highlightedIndex === index
-        contentItem: AppText { text: modelData; textStyle: "caption" }
+        contentItem: AppText {
+            text: control.textRole && modelData !== null && typeof modelData === "object"
+                  ? modelData[control.textRole] : modelData
+            textStyle: "caption"
+        }
         background: Rectangle { color: parent.highlighted ? Theme.primary : Theme.alternate }
     }
     popup: Popup {

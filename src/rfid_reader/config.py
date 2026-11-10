@@ -113,6 +113,7 @@ class Settings:
     epc_allowed_prefixes: tuple[str, ...] = DEFAULT_EPC_ALLOWED_PREFIXES
     audio_enabled: bool = DEFAULT_AUDIO_ENABLED
     audio_interval_ms: int = DEFAULT_AUDIO_INTERVAL_MS
+    voice_name: str = "Microsoft Maria Desktop"
 
     @property
     def reader_connection(self) -> ReaderConnectionSettings:
@@ -551,4 +552,5 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
         epc_allowed_prefixes=epc_allowed_prefixes,
         audio_enabled=_boolean(source, "RFID_AUDIO_ENABLED", DEFAULT_AUDIO_ENABLED),
         audio_interval_ms=_audio_interval(source),
+        voice_name=source.get("RFID_VOICE_NAME", "Microsoft Maria Desktop").strip(),
     )

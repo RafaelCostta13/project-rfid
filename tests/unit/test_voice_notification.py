@@ -33,7 +33,7 @@ def test_voice_service_reports_missing_maria_without_overlap() -> None:
             completed.set()
 
     def runner(command: Sequence[str], message: str) -> int:
-        assert "Microsoft Maria Desktop" in " ".join(command)
+        assert "SelectVoice($name)" in " ".join(command)
         assert message == "Passou 10 caixas"
         started.set()
         assert release.wait(1)
@@ -51,7 +51,7 @@ def test_voice_service_reports_missing_maria_without_overlap() -> None:
         )
         assert events[-1] == VoiceNotificationEvent(
             VoiceNotificationState.ERROR,
-            "A voz Microsoft Maria Desktop não está instalada neste Windows.",
+            "A voz selecionada não está instalada neste Windows.",
         )
     finally:
         release.set()

@@ -16,6 +16,7 @@ from rfid_reader.domain import (
     ConnectionStatus,
     InventoryCleared,
     InventoryEvent,
+    InventoryResumed,
     InventorySessionCompleted,
     InventoryStatus,
     InventoryStatusChanged,
@@ -235,6 +236,8 @@ class ApplicationRuntime:
     def _on_inventory(self, event: InventoryEvent) -> None:
         if isinstance(event, InventoryCleared):
             self.lookup.start_session()
+        elif isinstance(event, InventoryResumed):
+            self.lookup.resume_session()
         elif isinstance(event, TagReceived):
             self.lookup.submit(event.tag)
             return

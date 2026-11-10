@@ -147,14 +147,26 @@ ScrollView {
                 FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.audio : null; Layout.fillWidth: true }
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.border }
                 AppText { text: "Notificação por voz"; textStyle: "card" }
-                AppText { text: "Voz: Microsoft Maria Desktop"; textStyle: "caption"; color: Theme.secondaryText }
-                AppText { text: "Idioma: Português (Brasil)"; textStyle: "caption"; color: Theme.secondaryText }
+                AppText { text: "Voz e idioma"; textStyle: "caption"; color: Theme.secondaryText }
+                ActionButton { text: "Carregar vozes do Windows"; enabled: !!page.settingsBridge && !page.isBusy; onClicked: page.settingsBridge.loadVoices() }
+                StyledComboBox {
+                    id: voiceChoice
+                    objectName: "voiceChoice"
+                    Layout.fillWidth: true
+                    model: page.settingsBridge ? page.settingsBridge.voices : []
+                    textRole: "label"
+                    valueRole: "name"
+                    currentIndex: indexOfValue(page.settingsBridge ? page.settingsBridge.selectedVoice : "")
+                    enabled: !page.isBusy && count > 0
+                }
+                ActionButton { text: "Salvar voz"; enabled: !page.isBusy && voiceChoice.currentIndex >= 0; onClicked: page.settingsBridge.saveVoice(voiceChoice.currentValue) }
+                FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.voice : null; Layout.fillWidth: true }
                 AppText { text: "Quantidade de caixas"; textStyle: "caption"; color: Theme.secondaryText }
                 SpinBox {
                     id: voiceQuantity
                     objectName: "voiceQuantity"
                     from: 0; to: 9999; value: 10
-                    enabled: !page.settingsBridge.voiceTesting
+                    enabled: !!page.settingsBridge && !page.settingsBridge.voiceTesting
                     Layout.fillWidth: true
                 }
                 AppText {

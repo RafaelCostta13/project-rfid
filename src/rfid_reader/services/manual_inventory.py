@@ -9,6 +9,7 @@ from collections.abc import Callable
 from rfid_reader.domain import (
     InventoryCleared,
     InventoryEvent,
+    InventoryResumed,
     InventoryStatus,
     InventoryStatusChanged,
     TagRead,
@@ -37,7 +38,7 @@ class ManualInventoryService:
         with self._lock:
             return self._status
 
-    def start(self) -> bool:
+    def start(self, *, resume: bool = False) -> bool:
         """Inicia uma única leitura quando o reader está conectado."""
 
         with self._lock:
@@ -71,11 +72,15 @@ class ManualInventoryService:
             self._emit(InventoryStatusChanged(status))
             return False
 
-        self._emit(InventoryCleared())
+        self._emit(InventoryResumed() if resume else InventoryCleared())
         with self._lock:
             self._accept_tags = True
         self._emit(InventoryStatusChanged(InventoryStatus.READING))
         return True
+
+    def resume(self) -> bool:
+        """Reinicia o inventário mantendo a sessão lógica existente."""
+        return self.start(resume=True)
 
     def stop(self) -> bool:
         """Bloqueia novas tags antes de solicitar a parada ao reader."""

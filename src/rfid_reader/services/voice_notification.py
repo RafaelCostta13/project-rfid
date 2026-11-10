@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import subprocess
 import sys
@@ -17,7 +19,7 @@ VOICE_LANGUAGE = "Português (Brasil)"
 VOICE_VOLUME = 80
 VOICE_RATE = 0
 VOICE_TIMEOUT_SECONDS = 30.0
-VOICE_UNAVAILABLE_MESSAGE = "A voz Microsoft Maria Desktop não está instalada neste Windows."
+VOICE_UNAVAILABLE_MESSAGE = "A voz selecionada não está instalada neste Windows."
 VOICE_FAILURE_MESSAGE = "Não foi possível reproduzir a notificação por voz."
 WINDOWS_ONLY_MESSAGE = "A síntese de voz está disponível apenas no Windows."
 
@@ -56,10 +58,12 @@ class VoiceNotificationService:
         *,
         runner: VoiceRunner | None = None,
         platform: str = sys.platform,
+        voice_name: str = VOICE_NAME,
     ) -> None:
         self._listener = listener
         self._runner = runner or _run_windows_speech
         self._platform = platform
+        self.voice_name = voice_name
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-notification")
         self._lock = threading.Lock()
         self._speaking = False
@@ -86,12 +90,12 @@ class VoiceNotificationService:
                 return False
             self._speaking = True
         self._emit(VoiceNotificationState.STARTED, message)
-        self._executor.submit(self._run, message)
+        self._executor.submit(self._run, message, self.voice_name)
         return True
 
-    def _run(self, message: str) -> None:
+    def _run(self, message: str, voice_name: str) -> None:
         try:
-            return_code = self._runner(_powershell_command(), message)
+            return_code = self._runner(_powershell_command(voice_name), message)
             if return_code == 3:
                 self._emit(
                     VoiceNotificationState.ERROR,
@@ -118,18 +122,51 @@ class VoiceNotificationService:
         self._listener(VoiceNotificationEvent(state, message))
 
 
-def _powershell_command() -> tuple[str, ...]:
+def list_windows_voices() -> list[dict[str, str]]:
+    """Lista as vozes habilitadas do mecanismo de síntese usado pela aplicação."""
+    if sys.platform != "win32":
+        return []
+    script = (
+        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new(); "
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        "@($s.GetInstalledVoices() | Where-Object Enabled | ForEach-Object { "
+        "@{name=$_.VoiceInfo.Name; language=$_.VoiceInfo.Culture.Name} }) | "
+        "ConvertTo-Json -Compress"
+    )
+    result = subprocess.run(
+        ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script),
+        capture_output=True,
+        timeout=VOICE_TIMEOUT_SECONDS,
+        check=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    data = json.loads(result.stdout.decode("utf-8-sig"))
+    if isinstance(data, dict):
+        data = [data]
+    return [
+        {
+            "name": item["name"],
+            "language": item["language"],
+            "label": f"{item['name']} ({item['language']})",
+        }
+        for item in data
+    ]
+
+
+def _powershell_command(voice_name: str = VOICE_NAME) -> tuple[str, ...]:
     """Retorna comando fixo; a frase chega via stdin, nunca interpolada no script."""
 
+    encoded_name = base64.b64encode(voice_name.encode("utf-8")).decode("ascii")
     script = (
         "Add-Type -AssemblyName System.Speech; "
         "$message = [Console]::In.ReadToEnd(); "
         "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        f"$name = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_name}')); "
         "$voice = $synth.GetInstalledVoices() | Where-Object { "
-        "$_.VoiceInfo.Name -eq 'Microsoft Maria Desktop' "
-        "-and $_.VoiceInfo.Culture.Name -eq 'pt-BR' }; "
+        "$_.Enabled -and $_.VoiceInfo.Name -eq $name }; "
         "if ($null -eq $voice) { exit 3 }; "
-        "$synth.SelectVoice('Microsoft Maria Desktop'); $synth.Volume = 80; $synth.Rate = 0; "
+        "$synth.SelectVoice($name); $synth.Volume = 80; $synth.Rate = 0; "
         "$synth.Speak($message)"
     )
     return (

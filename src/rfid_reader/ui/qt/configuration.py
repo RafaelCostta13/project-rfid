@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from rfid_reader.services.voice_notification import (
     VoiceNotificationEvent,
     VoiceNotificationService,
     VoiceNotificationState,
+    list_windows_voices,
     voice_message,
 )
 from rfid_reader.services.waveshare_configuration import (
@@ -60,6 +62,7 @@ class ConfigurationBridge(QObject):
     feedbackReceived = Signal(object)
     audioSettingsChanged = Signal(bool, int)
     voiceEventReceived = Signal(object)
+    voicesReceived = Signal(object)
 
     def __init__(
         self, settings: Settings, path: Path, runtime: ApplicationRuntime | None = None
@@ -74,7 +77,10 @@ class ConfigurationBridge(QObject):
         self._store = DotEnvReaderConfigurationStore(path)
         self._voice_testing = False
         self._voice_feedback = {"state": "", "message": ""}
-        self._voice = VoiceNotificationService(self.voiceEventReceived.emit)
+        self._voice = VoiceNotificationService(
+            self.voiceEventReceived.emit, voice_name=settings.voice_name
+        )
+        self._voices: list[dict[str, str]] = []
         self._unsubscribe: Callable[[], None] = lambda: None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qt-configuration")
         if runtime is None:
@@ -97,6 +103,7 @@ class ConfigurationBridge(QObject):
             self._unsubscribe = runtime.subscribe(self._runtime_feedback)
         self.feedbackReceived.connect(self._apply_feedback, Qt.ConnectionType.QueuedConnection)
         self.voiceEventReceived.connect(self._apply_voice_event, Qt.ConnectionType.QueuedConnection)
+        self.voicesReceived.connect(self._apply_voices, Qt.ConnectionType.QueuedConnection)
 
     def _get_fields(self) -> dict[str, object]:
         reader, waveshare = self._reader.current(), self._waveshare.current()
@@ -129,8 +136,38 @@ class ConfigurationBridge(QObject):
     feedback = Property(dict, _get_feedback, notify=changed)
     voiceTesting = Property(bool, lambda self: self._voice_testing, notify=changed)
     voiceFeedback = Property(dict, lambda self: dict(self._voice_feedback), notify=changed)
+    voices = Property(list, lambda self: list(self._voices), notify=changed)
+    selectedVoice = Property(str, lambda self: self._voice.voice_name, notify=changed)
     dockSuggestions = Property(list, lambda self: ["", *STATION_DOCK_SUGGESTIONS], constant=True)
     testsAvailable = Property(bool, lambda self: self._runtime is not None, constant=True)
+
+    def _load_voices(self) -> None:
+        try:
+            voices = list_windows_voices()
+            self.voicesReceived.emit(voices)
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+            LOGGER.warning("voice_list_failed", exc_info=True)
+            self.voicesReceived.emit(None)
+
+    @Slot()
+    def loadVoices(self) -> None:
+        if not self._closed:
+            self._executor.submit(self._load_voices)
+
+    @Slot(object)
+    def _apply_voices(self, voices: object) -> None:
+        if self._closed:
+            return
+        if isinstance(voices, list):
+            self._voices = voices
+            if not voices:
+                self._voice_feedback = {"state": "error", "message": "Nenhuma voz disponível."}
+        else:
+            self._voice_feedback = {
+                "state": "error",
+                "message": "Não foi possível listar as vozes.",
+            }
+        self.changed.emit()
 
     def _runtime_feedback(self, event: object) -> None:
         from rfid_reader.runtime import RuntimeEvent
@@ -253,6 +290,15 @@ class ConfigurationBridge(QObject):
                         section, True, "Configurações de áudio salvas com sucesso."
                     )
                 )
+            elif section == "voice":
+                name = values[0]
+                if not any(voice["name"] == name for voice in self._voices):
+                    raise ValueError("Selecione uma voz disponível.")
+                self._store.save_values({"RFID_VOICE_NAME": name})
+                self._voice.voice_name = name
+                self.feedbackReceived.emit(
+                    ConfigurationFeedback(section, True, "Voz salva com sucesso.")
+                )
         except (EpcFilterValidationError, ValueError) as error:
             self.feedbackReceived.emit(ConfigurationFeedback(section, False, str(error)))
         except Exception as error:
@@ -298,6 +344,10 @@ class ConfigurationBridge(QObject):
     @Slot(bool, int, result=bool)
     def saveAudio(self, enabled: bool, interval_ms: int) -> bool:
         return self._submit("audio", ("true" if enabled else "false", str(interval_ms)))
+
+    @Slot(str, result=bool)
+    def saveVoice(self, name: str) -> bool:
+        return self._submit("voice", (name,))
 
     def _submit_test(self, section: str, values: tuple[str, ...]) -> bool:
         if self._closed or self._busy or self._runtime is None:

@@ -208,6 +208,22 @@ def test_normal_session_completion_announces_found_count_once(rig: Rig) -> None:
     wait_for(lambda: announced == [3])
 
 
+def test_empty_session_and_simulation_do_not_announce(rig: Rig) -> None:
+    announced: list[int] = []
+    rig.bridge._operational_completion_notifier = lambda count: announced.append(count) or True
+    rig.bridge._simulation_completion_notifier = lambda count: announced.append(count) or True
+
+    rig.bridge._apply_event(
+        RuntimeEvent("session_completed", InventorySessionCompleted(8, "timeout_60_seconds", 0))
+    )
+    rig.bridge.requestStop()
+    wait_for(lambda: not rig.bridge.automaticEnabled)
+    assert rig.bridge.startSimulation()
+    rig.bridge.finishSimulation()
+
+    assert announced == []
+
+
 def test_simulator_modal_shares_metrics_and_table_model(rig: Rig) -> None:
     messages: list[str] = []
     handler = qInstallMessageHandler(lambda kind, context, message: messages.append(message))

@@ -126,6 +126,12 @@ class TagLookupService:
         with self._lock:
             self._accepting = False
 
+    def resume_session(self) -> None:
+        """Retoma consultas preservando a deduplicação da passagem."""
+        with self._lock:
+            if not self._closed:
+                self._accepting = True
+
     def complete_session(self, session_id: int) -> int | None:
         """Aguarda consultas aceitas e retorna o total confirmado de EPCs encontrados."""
 
@@ -244,7 +250,7 @@ class TagLookupService:
             read_result.status,
         )
         with self._lock:
-            if not self._closed:
+            if not self._closed and record.read_count == 0:
                 self._found_epcs_by_session.setdefault(task.session_id, set()).add(task.key.epc)
         self._emit(
             TagLookupChanged(

@@ -20,6 +20,11 @@ class InventoryCleared:
 
 
 @dataclass(frozen=True, slots=True)
+class InventoryResumed:
+    """Retoma a sessão existente sem limpar seus resultados."""
+
+
+@dataclass(frozen=True, slots=True)
 class InventoryStatusChanged:
     """Informa uma mudança do estado da leitura."""
 
@@ -42,4 +47,4 @@ class TagReceived:
     tag: TagRead
 
 
-InventoryEvent = InventoryCleared | InventoryStatusChanged | TagReceived
+InventoryEvent = InventoryCleared | InventoryResumed | InventoryStatusChanged | TagReceived

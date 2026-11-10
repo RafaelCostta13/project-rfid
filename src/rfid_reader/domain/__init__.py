@@ -4,6 +4,7 @@ from rfid_reader.domain.connection_status import ConnectionKind, ConnectionStatu
 from rfid_reader.domain.inventory import (
     InventoryCleared,
     InventoryEvent,
+    InventoryResumed,
     InventorySessionCompleted,
     InventoryStatus,
     InventoryStatusChanged,
@@ -40,6 +41,7 @@ __all__ = [
     "InventoryCleared",
     "InventorySessionCompleted",
     "InventoryEvent",
+    "InventoryResumed",
     "InventoryStatus",
     "InventoryStatusChanged",
     "LocalTagRecord",

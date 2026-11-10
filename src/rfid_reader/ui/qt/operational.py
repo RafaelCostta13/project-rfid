@@ -198,7 +198,8 @@ class OperationalBridge(QObject):
             self._inventory = value.status
         elif isinstance(value, InventorySessionCompleted):
             if (
-                value.session_id not in self._announced_operational_sessions
+                value.found_count > 0
+                and value.session_id not in self._announced_operational_sessions
                 and self._operational_completion_notifier is not None
             ):
                 self._announced_operational_sessions.add(value.session_id)
@@ -319,7 +320,7 @@ class OperationalBridge(QObject):
         found_count = self._simulation_summary.total
         self._simulation_active = False
         self._audio.cancel()
-        if announce and self._simulation_completion_notifier is not None:
+        if announce and found_count > 0 and self._simulation_completion_notifier is not None:
             self._simulation_completion_notifier(found_count)
         self.changed.emit()
 

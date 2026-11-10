@@ -8,6 +8,7 @@ from dotenv import dotenv_values
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, qInstallMessageHandler
+from PySide6.QtQml import QQmlEngine, QQmlExpression
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtTest import QTest
 
@@ -110,6 +111,23 @@ def test_audio_preferences_are_persisted_and_emitted(configuration: Configuratio
     assert configuration.property("fields")["audio_enabled"] is False
     assert configuration.property("fields")["audio_interval_ms"] == 450
     assert updates == [(False, 450)]
+
+
+def test_selected_voice_is_saved_and_used(
+    configuration: ConfigurationBridge, tmp_path: Path
+) -> None:
+    configuration._executor.submit(lambda: None).result(timeout=35)
+    QCoreApplication.processEvents()
+    configuration._voices = [
+        {"name": "Test Voice", "language": "en-US", "label": "Test Voice (en-US)"}
+    ]
+    save_and_wait(configuration, lambda: configuration.saveVoice("Test Voice"))
+    assert configuration.selectedVoice == "Test Voice"
+    assert dotenv_values(tmp_path / ".env")["RFID_VOICE_NAME"] == "Test Voice"
+    assert load_config({"RFID_VOICE_NAME": "Test Voice"}).voice_name == "Test Voice"
+    save_and_wait(configuration, lambda: configuration.saveVoice("Unknown"))
+    assert configuration.selectedVoice == "Test Voice"
+    assert configuration.feedback["voice"]["state"] == "error"
 
 
 def test_voice_preview_and_test_are_isolated_from_configuration_workers(
@@ -363,6 +381,40 @@ def test_dock_combo_accepts_keyboard_custom_value(configuration: ConfigurationBr
         wait_for(lambda: not configuration.property("busy"))
         assert configuration.property("fields")["station_dock"] == "D-07"
         assert dock.property("editText") == "D-07"
+    finally:
+        window.close()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        bridge.close()
+
+
+def test_voice_combo_displays_labels_and_selected_value(configuration: ConfigurationBridge) -> None:
+    configuration._apply_voices(
+        [
+            {"name": "Voz A", "language": "pt-BR", "label": "Voz A (pt-BR)"},
+            {"name": "Voice B", "language": "en-US", "label": "Voice B (en-US)"},
+        ]
+    )
+    bridge = ConnectionBridge()
+    engine, window = create_engine(bridge, configuration, initial_page="settings")
+    try:
+        window.show()
+        QTest.qWait(30)
+        combo = window.findChild(QObject, "voiceChoice")
+        combo.setProperty("currentIndex", 1)
+        assert combo.property("currentText") == "Voice B (en-US)"
+        assert combo.property("currentValue") == "Voice B"
+        context = QQmlEngine.contextForObject(combo)
+        QQmlExpression(context, combo, "popup.open()").evaluate()
+        QTest.qWait(30)
+        labels = [
+            QQmlExpression(
+                context, combo, f"popup.contentItem.itemAtIndex({index}).contentItem.text"
+            ).evaluate()[0]
+            for index in range(2)
+        ]
+        assert "Voz A (pt-BR)" in labels
+        assert "Voice B (en-US)" in labels
     finally:
         window.close()
         engine.deleteLater()

@@ -25,6 +25,9 @@ class Inventory:
         self.status = InventoryStatus.ERROR if self.fail_stop else InventoryStatus.STOPPED
         return not self.fail_stop
 
+    def resume(self) -> bool:
+        return self.start()
+
 
 class Timer:
     def __init__(self, seconds: float, callback: Callable[[], None]) -> None:
@@ -122,9 +125,39 @@ def test_timeout_stops_and_requires_clear_beams() -> None:
     assert rig.inventory.stops == 1
     assert rig.relays == {1: True, 2: False, 3: False}
     assert rig.timers[0].cancelled
-    assert rig.cycle_finished == ["timeout_60_seconds"]
+    assert rig.cycle_finished == []
     rig.update(False, False)
     assert rig.relays[1]
+
+
+def test_pedal_reopens_only_after_timeout_and_exit_has_priority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
+    rig = Rig()
+
+    def sample(entry: bool, exit_: bool, pedal: bool) -> None:
+        clock[0] += 0.1
+        rig.controller.update((entry, exit_, pedal), rig.relay)
+
+    sample(True, True, False)
+    sample(True, True, False)
+    sample(False, True, False)
+    rig.timers[-1].callback()
+    sample(False, True, True)
+    sample(False, True, True)
+    assert rig.inventory.starts == 2
+    assert rig.relays == {1: False, 2: True, 3: False}
+    rig.timers[-1].callback()
+    sample(False, True, True)
+    assert rig.inventory.starts == 2
+    sample(False, True, False)
+    sample(False, True, False)
+    sample(False, False, True)
+    sample(False, False, True)
+    assert rig.inventory.starts == 2
+    assert rig.cycle_finished == ["exit_sensor_interrupted"]
     rig.update(True, True)
     assert rig.relays[1]
 
