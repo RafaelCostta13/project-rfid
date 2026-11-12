@@ -85,7 +85,7 @@ class Timer:
 
 class Port:
     def __init__(self) -> None:
-        self.inputs = (True, True, False, True, False)
+        self.inputs = (True, True, False, True, True)
         self.relays = [False] * 8
         self.writes: list[tuple[int, bool]] = []
         self.opens = 0
@@ -179,7 +179,7 @@ class Backend:
                 )
             }
             record.update(
-                epc=EPC,
+                epc=request.full_url.rsplit("/", 1)[-1],
                 tag=None,
                 first_read_at=None,
                 last_read_at=None,
@@ -193,12 +193,13 @@ class Backend:
                 doca="DOCA 35",
             )
             return self.response(200, {"found": True, "data": record})
-        assert json.loads(request.data) == {"epc": EPC}
+        posted = json.loads(request.data)
+        assert set(posted) == {"epc"}
         return self.response(
             200,
             {
                 "success": True,
-                "epc": EPC,
+                "epc": posted["epc"],
                 "first_read": True,
                 "duplicate": False,
                 "status": "lido",

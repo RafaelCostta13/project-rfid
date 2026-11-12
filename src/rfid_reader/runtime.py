@@ -33,6 +33,7 @@ from rfid_reader.integrations.waveshare_modbus import (
 )
 from rfid_reader.readers import ZebraFX9600Reader
 from rfid_reader.readers.base import RFIDReader
+from rfid_reader.services.antenna_mapping import AntennaMappingService
 from rfid_reader.services.automatic_inventory import (
     AutomaticInventoryController,
     CycleTimer,
@@ -129,6 +130,7 @@ class ApplicationRuntime:
         deps = dependencies or RuntimeDependencies()
         self._lock = threading.RLock()
         self._reader_gate = threading.Lock()
+        self._mapping_gate = threading.Lock()
         self._started = False
         self._closing = False
         self._closed = threading.Event()
@@ -136,15 +138,22 @@ class ApplicationRuntime:
         self._statuses: dict[ConnectionKind, ConnectionStatus] = {}
         self._manual_automatic_stop = False
         self._automatic_start_pending = False
+        self._mapping_reserved = False
         self._backend_factory = deps.backend_factory
         self._timeout = settings.connection_timeout_seconds
-        self.reader = deps.reader or ZebraFX9600Reader(
-            settings.reader_host,
-            settings.reader_port,
-            settings.reader_name,
-            settings.antennas,
-            settings.connection_timeout_seconds,
-        )
+        if deps.reader is None:
+            zebra = ZebraFX9600Reader(
+                settings.reader_host,
+                settings.reader_port,
+                settings.reader_name,
+                settings.antennas,
+                settings.connection_timeout_seconds,
+            )
+            if settings.antenna_power_dbm:
+                zebra.configure_antenna_power(dict(settings.antenna_power_dbm))
+            self.reader: OperationalReader = zebra
+        else:
+            self.reader = deps.reader
         store = DotEnvReaderConfigurationStore(path)
         self.epc_filter_configuration = EpcFilterConfigurationService(settings, store)
         self.backend_configuration = BackendConfigurationService(settings, store)
@@ -157,6 +166,9 @@ class ApplicationRuntime:
             epc_filter_provider=self.epc_filter_configuration.current,
         )
         self.inventory = ManualInventoryService(self.reader, self._on_inventory)
+        self.antenna_mapping = AntennaMappingService(
+            self.reader, lambda snapshot: self._publish("antenna_mapping", snapshot)
+        )
         self.automatic = AutomaticInventoryController(
             self.inventory,
             deps.timer_factory,
@@ -281,10 +293,16 @@ class ApplicationRuntime:
             self._statuses[kind] = status
         if kind is ConnectionKind.RFID and status is ConnectionStatus.CONNECTED:
             self.inventory.connection_recovered()
+        elif kind is ConnectionKind.RFID and status in (
+            ConnectionStatus.ERROR,
+            ConnectionStatus.DISCONNECTED,
+        ):
+            self.antenna_mapping.connection_lost()
         self.automatic.update_connection_status(kind, status)
         with self._lock:
             if (
                 not self._manual_automatic_stop
+                and not self._mapping_reserved
                 and not self._automatic_start_pending
                 and not self.automatic.enabled
                 and self.automatic.ready
@@ -341,15 +359,21 @@ class ApplicationRuntime:
     def _start_automatic(self, *, manual: bool) -> bool:
         def enable() -> bool:
             # Devolve o diagnóstico à operação antes de armar DI1.
-            self.diagnostic.resume_automatic()
-            self.inventory.connection_recovered()
             try:
-                return self.automatic.enable()
+                self.diagnostic.resume_automatic()
+                with self._mapping_gate:
+                    with self._lock:
+                        if self._mapping_reserved:
+                            return False
+                    self.inventory.connection_recovered()
+                    return self.automatic.enable()
             finally:
                 with self._lock:
                     self._automatic_start_pending = False
 
         with self._lock:
+            if self._mapping_reserved:
+                return False
             if manual:
                 self._manual_automatic_stop = False
             elif self._closing:
@@ -361,12 +385,59 @@ class ApplicationRuntime:
             self._manual_automatic_stop = True
         return self.submit("stop", self.automatic.disable)
 
+    def start_antenna_mapping(self) -> bool:
+        """Reserva o reader, somente com o automático desabilitado."""
+        with self._mapping_gate, self._lock:
+            if (
+                self._mapping_reserved
+                or self.automatic.enabled
+                or self._automatic_start_pending
+                or self.inventory.status is not InventoryStatus.STOPPED
+            ):
+                return False
+            self._mapping_reserved = True
+            if not self.submit("antenna_mapping_start", self._start_antenna_mapping):
+                self._mapping_reserved = False
+                return False
+            return True
+
+    @property
+    def antenna_mapping_reserved(self) -> bool:
+        with self._lock:
+            return self._mapping_reserved
+
+    def _start_antenna_mapping(self) -> bool:
+        with self._reader_gate:
+            started = self.antenna_mapping.start()
+        if not started and not self.reader.is_inventorying():
+            with self._lock:
+                self._mapping_reserved = False
+        return started
+
+    def stop_antenna_mapping(self) -> bool:
+        with self._lock:
+            if not self._mapping_reserved:
+                return False
+            return self.submit("antenna_mapping_stop", self._stop_antenna_mapping)
+
+    def _stop_antenna_mapping(self) -> bool:
+        with self._reader_gate:
+            success = self.antenna_mapping.stop()
+            safe_to_release = success or not self.reader.is_connected()
+        if safe_to_release:
+            with self._lock:
+                self._mapping_reserved = False
+        return success
+
     def test_reader(self, name: str, host: str, port: str) -> bool:
         connection = validate_reader_connection(name, host, port)
         if self.automatic.enabled or self.inventory.status is InventoryStatus.READING:
             return False
         # O monitor e este teste compartilham a sessão e a exclusão de conexão.
         with self._reader_gate:
+            with self._lock:
+                if self._mapping_reserved:
+                    return False
             saved = self.reader_configuration.current()
             try:
                 self.reader.disconnect()
@@ -388,6 +459,12 @@ class ApplicationRuntime:
         self.waveshare_tester.test(connection)
         return True
 
+    def _close_antenna_mapping(self) -> None:
+        if self.antenna_mapping_reserved:
+            with self._reader_gate:
+                if not self.antenna_mapping.stop():
+                    raise RuntimeShutdownError("Não foi possível parar o mapeamento de antenas.")
+
     def close(self) -> None:
         """Bloqueia comandos, cancela ciclo e aguarda comunicação/HTTP em andamento."""
 
@@ -405,6 +482,7 @@ class ApplicationRuntime:
             ("lookup_cancel", self.lookup.begin_close),
             ("automatic", self.automatic.close),
             ("commands", lambda: self.commands.shutdown(wait=True, cancel_futures=True)),
+            ("antenna_mapping", self._close_antenna_mapping),
             ("monitor", self.monitor.stop),
             ("diagnostic", self.diagnostic.close),
             ("reader_configuration", self.reader_configuration.close),

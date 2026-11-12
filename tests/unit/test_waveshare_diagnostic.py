@@ -294,6 +294,12 @@ def test_automatic_worker_stops_on_failure_and_preserves_other_relays(failure: s
         service.set_relay(1, False)
         service.set_relay(4, True)
         port.inputs = (False, True, True, True, True)
+        polls = port.calls.count("poll")
+        deadline = time.monotonic() + 2
+        while port.calls.count("poll") < polls + 2:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        port.inputs = (False, True, True, False, True)
         assert inventory.started.wait(2)
         deadline = time.monotonic() + 2
         while "CH2=True" not in port.calls:
@@ -303,7 +309,13 @@ def test_automatic_worker_stops_on_failure_and_preserves_other_relays(failure: s
             port.fail_poll = True
         elif failure == "relay":
             port.fail_relay = True
-            port.inputs = (False, False, True, True, True)
+            port.inputs = (False, True, True, False, False)
+            polls = port.calls.count("poll")
+            deadline = time.monotonic() + 2
+            while port.calls.count("poll") < polls + 2:
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            port.inputs = (False, False, True, False, False)
         else:
             service.close()
         assert inventory.stopped.wait(2)

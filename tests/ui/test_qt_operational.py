@@ -1,6 +1,7 @@
 import threading
 import time
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from rfid_reader.domain import (
     ConnectionStatus,
     InventorySessionCompleted,
     InventoryStatus,
+    TagRead,
 )
 from rfid_reader.integrations.backend_client import BackendRFIDClient
 from rfid_reader.runtime import (
@@ -103,16 +105,24 @@ class Rig:
         if not self.runtime.automatic.enabled:
             self.bridge.requestStart()
             wait_for(lambda: self.bridge.automaticEnabled)
-        self.port.inputs = (True, True, False, True, False)
+        self.port.inputs = (True, True, False, True, True)
         samples = self.port.samples
         wait_for(lambda: self.port.samples >= samples + 2)
-        self.port.inputs = (False, True, False, True, False)
+        self.port.inputs = (False, True, False, True, True)
+        samples = self.port.samples
+        wait_for(lambda: self.port.samples >= samples + 2)
+        self.port.inputs = (False, True, False, False, True)
         wait_for(lambda: self.reader.reading)
         wait_for(lambda: self.bridge.operationState == "reading")
         wait_for(lambda: len(self.timers) == timer_count + 1 and self.timers[-1].started)
 
     def end_cycle(self) -> None:
-        self.port.inputs = (False, False, False, True, False)
+        self.port.inputs = (False, True, False, False, False)
+        samples = self.port.samples
+        wait_for(lambda: self.port.samples >= samples + 2)
+        self.port.inputs = (False, False, False, False, False)
+        samples = self.port.samples
+        wait_for(lambda: self.port.samples >= samples + 2)
         wait_for(lambda: not self.reader.reading)
         wait_for(lambda: self.bridge.operationState == "ok")
 
@@ -222,6 +232,106 @@ def test_empty_session_and_simulation_do_not_announce(rig: Rig) -> None:
     rig.bridge.finishSimulation()
 
     assert announced == []
+
+
+def test_antenna_configuration_modal_opens_with_configured_antennas(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(
+        rig.configuration, "_antenna_levels", lambda: tuple(i / 2 for i in range(20, 301))
+    )
+    handler = qInstallMessageHandler(lambda kind, context, message: messages.append(message))
+    engine, window = create_engine(rig.bridge, rig.configuration, diagnostic_bridge=rig.bridge)
+    try:
+        window.show()
+        window.findChild(QObject, "settingsNavigation").clicked.emit()
+        window.findChild(QObject, "antennaSettingsButton").clicked.emit()
+        popup = window.findChild(QObject, "antennaSettingsPopup")
+        wait_for(lambda: popup.property("visible"))
+        assert (
+            window.findChild(QObject, "antennaCount").property("text") == "Antenas configuradas: 1"
+        )
+        levels = visual_child(window, "antennaPowerLevels")
+        wait_for(lambda: levels.property("lineCount") > 1)
+        assert "10, 10.5" in levels.property("text")
+        assert levels.property("text").endswith("150")
+        scroll = visual_child(window, "antennaLevelsScroll")
+        assert levels.property("height") > scroll.property("height")
+        assert scroll.property("contentHeight") >= levels.property("height")
+        visual_child(window, "antennaPower1").setProperty("text", "27.0")
+        window.findChild(QObject, "antennaSaveButton").clicked.emit()
+        wait_for(lambda: rig.configuration.feedback.get("antenna", {}).get("state") == "ok")
+        assert rig.configuration.antennaSettings()[0]["power"] == "27.0"
+        assert not messages, "\n".join(messages)
+    finally:
+        window.close()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        qInstallMessageHandler(handler)
+
+
+def test_mapping_isolated_from_operational_backend(rig: Rig) -> None:
+    messages: list[str] = []
+    handler = qInstallMessageHandler(lambda kind, context, message: messages.append(message))
+    rig.configuration._antennas = (1, 2)
+    engine, window = create_engine(rig.bridge, rig.configuration, diagnostic_bridge=rig.bridge)
+    try:
+        window.show()
+        window.findChild(QObject, "settingsNavigation").clicked.emit()
+        window.findChild(QObject, "antennaSettingsButton").clicked.emit()
+        window.findChild(QObject, "antennaMapOpenButton").clicked.emit()
+        popup = window.findChild(QObject, "antennaMappingPopup")
+        wait_for(lambda: popup.property("visible"))
+        assert not rig.configuration.startMapping()
+        rig.bridge.requestStop()
+        wait_for(lambda: not rig.bridge.automaticEnabled)
+        angle = window.findChild(QObject, "mappingAngle")
+        angle.setProperty("value", 30)
+        window.findChild(QObject, "mappingStartButton").clicked.emit()
+        wait_for(lambda: rig.configuration.mappingActive and not rig.configuration.mappingPending)
+        assert not rig.runtime.start_automatic()
+        rig.reader.callback(TagRead(EPC, "simulated", 2, datetime.now(UTC), -65))
+        rig.reader.callback(TagRead(EPC, "simulated", 2, datetime.now(UTC), -70))
+        wait_for(lambda: len(rig.configuration.mappingPoints) == 1)
+        point = rig.configuration.mappingPoints[0]
+        assert (point["antenna"], point["angle"], point["rssi"]) == (2, 30, -65)
+        assert rig.backend.count("GET") == rig.backend.count("POST") == 0
+        window.findChild(QObject, "mappingClearButton").clicked.emit()
+        wait_for(lambda: len(rig.configuration.mappingPoints) == 0)
+        window.findChild(QObject, "mappingStopButton").clicked.emit()
+        wait_for(lambda: not rig.configuration.mappingReserved)
+        assert not rig.reader.reading
+        assert not messages, "\n".join(messages)
+    finally:
+        window.close()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        qInstallMessageHandler(handler)
+
+
+def test_mapping_reservation_blocks_queued_automatic_start(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig.bridge.requestStop()
+    wait_for(lambda: not rig.bridge.automaticEnabled)
+    entered, release = threading.Event(), threading.Event()
+
+    def delayed_resume() -> None:
+        entered.set()
+        assert release.wait(3)
+
+    monkeypatch.setattr(rig.runtime.diagnostic, "resume_automatic", delayed_resume)
+    assert rig.runtime.start_automatic()
+    try:
+        assert entered.wait(3)
+        assert rig.runtime.start_antenna_mapping()
+    finally:
+        release.set()
+    wait_for(lambda: rig.runtime.antenna_mapping.snapshot().active)
+    assert not rig.runtime.automatic.enabled
+    assert rig.runtime.stop_antenna_mapping()
+    wait_for(lambda: not rig.runtime.antenna_mapping_reserved)
 
 
 def test_simulator_modal_shares_metrics_and_table_model(rig: Rig) -> None:
@@ -377,11 +487,33 @@ def test_post_finishing_after_stop_updates_only_current_session(rig: Rig) -> Non
     assert rig.backend.count("POST") == 1
 
 
+def test_four_sensor_cycle_preserves_epcs_across_pedal_reopening(rig: Rig) -> None:
+    rig.start_cycle()
+    rig.reader.emit()
+    wait_for(lambda: rig.bridge.foundCount == 1)
+    rig.timers[-1].callback()
+    wait_for(lambda: not rig.reader.reading)
+    wait_for(lambda: rig.bridge.operationState == "ok")
+    rig.port.inputs = (False, True, True, False, True)
+    wait_for(lambda: rig.reader.reading)
+    wait_for(lambda: rig.bridge.operationState == "reading")
+    assert rig.bridge.foundCount == 1
+    rig.reader.emit()
+    QTest.qWait(100)
+    assert rig.backend.count("GET") == rig.backend.count("POST") == 1
+    rig.reader.emit("E280691500005029EEA6A276")
+    wait_for(lambda: rig.bridge.foundCount == 2)
+    assert rig.backend.count("GET") == rig.backend.count("POST") == 2
+    rig.end_cycle()
+    assert rig.bridge.foundCount == 2
+
+
 def test_timeout_and_backend_loss_stop_inventory(rig: Rig) -> None:
     rig.start_cycle()
     rig.timers[0].callback()
     wait_for(lambda: not rig.reader.reading)
     assert rig.timers[0].cancelled
+    rig.end_cycle()
     rig.start_cycle()
     rig.backend.system = "error"
     wait_for(lambda: not rig.reader.reading)
@@ -426,7 +558,7 @@ def test_postgresql_health_failure_updates_system_and_preserves_readiness(rig: R
     wait_for(
         lambda: rig.runtime.statuses().get(ConnectionKind.DATABASE) is ConnectionStatus.CONNECTED
     )
-    assert rig.bridge.connections[-1]["state"] == "ok"
+    wait_for(lambda: rig.bridge.connections[-1]["state"] == "ok")
 
 
 @pytest.mark.parametrize("size", [(910, 512), (1366, 768), (1920, 1080)])
@@ -527,7 +659,10 @@ def test_failure_starting_zebra_never_indicates_active_inventory(rig: Rig) -> No
     wait_for(lambda: rig.bridge.automaticEnabled)
     samples = rig.port.samples
     wait_for(lambda: rig.port.samples >= samples + 2)
-    rig.port.inputs = (False, True, False, True, False)
+    rig.port.inputs = (False, True, False, True, True)
+    samples = rig.port.samples
+    wait_for(lambda: rig.port.samples >= samples + 2)
+    rig.port.inputs = (False, True, False, False, True)
     wait_for(lambda: rig.reader.starts == 1)
     assert not rig.reader.reading
     assert not rig.timers
@@ -634,7 +769,10 @@ def test_slow_llrp_does_not_block_qt_slots_or_event_delivery(
     wait_for(lambda: rig.bridge.automaticEnabled)
     samples = rig.port.samples
     wait_for(lambda: rig.port.samples >= samples + 2)
-    rig.port.inputs = (False, True, False, True, False)
+    rig.port.inputs = (False, True, False, True, True)
+    samples = rig.port.samples
+    wait_for(lambda: rig.port.samples >= samples + 2)
+    rig.port.inputs = (False, True, False, False, True)
     wait_for(entered.is_set)
     # Uma resposta do executor pode chegar enquanto o controlador aguarda LLRP.
     rig.bridge.eventReceived.emit(RuntimeEvent("command", CommandFinished("start", True)))

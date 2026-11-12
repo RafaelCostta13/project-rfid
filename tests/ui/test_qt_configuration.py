@@ -100,6 +100,33 @@ def test_backend_keeps_existing_trim_only_validation(configuration: Configuratio
     assert configuration.property("fields")["backend_url"] == ""
 
 
+def test_antenna_power_save_validation_and_reload(
+    qt_application: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / ".env"
+    bridge = ConfigurationBridge(load_config({"RFID_ANTENNAS": "1,2"}), path)
+    monkeypatch.setattr(bridge, "_antenna_levels", lambda: (20.0, 27.0, 28.5))
+    try:
+        save_and_wait(bridge, lambda: bridge.saveAntennaPower(["27", "28.5"]))
+        assert bridge.feedback["antenna"]["state"] == "ok"
+        assert dotenv_values(path)["RFID_ANTENNA_POWER_DBM"] == "1:27.0,2:28.5"
+        save_and_wait(bridge, lambda: bridge.saveAntennaPower(["27", "29"]))
+        assert bridge.feedback["antenna"]["state"] == "error"
+        assert bridge.antennaSettings()[1]["power"] == "28.5"
+        reopened = ConfigurationBridge(
+            load_config({"RFID_ANTENNAS": "1,2", "RFID_ANTENNA_POWER_DBM": "1:27.0,2:28.5"}), path
+        )
+        try:
+            assert reopened.antennaSettings() == bridge.antennaSettings()
+            assert reopened.antennaPowerLevels() == []
+            save_and_wait(reopened, lambda: reopened.saveAntennaPower(["27", "28.5"]))
+            assert reopened.feedback["antenna"]["state"] == "error"
+        finally:
+            reopened.close()
+    finally:
+        bridge.close()
+
+
 def test_audio_preferences_are_persisted_and_emitted(configuration: ConfigurationBridge) -> None:
     updates: list[tuple[bool, int]] = []
     configuration.audioSettingsChanged.connect(

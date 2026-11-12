@@ -137,9 +137,9 @@ class OperationalBridge(QObject):
         if self._message:
             return self._message
         if self._inventory is InventoryStatus.READING:
-            return "Inventário ativo · DI2 encerra o ciclo · limite de 60 segundos."
+            return "Inventário ativo · saída DI5 → DI2 · limite de 60 segundos."
         if self._automatic and self._ready():
-            return "Modo automático habilitado · aguardando DI1 ATIVA → DESATIVADA."
+            return "Modo automático habilitado · aguardando entrada DI1 → DI4."
         return "Leitura desabilitada ou aguardando conexões operacionais."
 
     def _active_summary(self) -> TagLookupSessionSummary:

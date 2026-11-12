@@ -19,6 +19,7 @@ from rfid_reader.domain import (
     WaveshareConfigurationFeedback,
     WaveshareConfigurationOutcome,
 )
+from rfid_reader.services.antenna_mapping import MappingSnapshot
 from rfid_reader.services.backend import BackendConfigurationService
 from rfid_reader.services.epc_filter import (
     EpcFilterConfigurationService,
@@ -63,6 +64,7 @@ class ConfigurationBridge(QObject):
     audioSettingsChanged = Signal(bool, int)
     voiceEventReceived = Signal(object)
     voicesReceived = Signal(object)
+    mappingReceived = Signal(object)
 
     def __init__(
         self, settings: Settings, path: Path, runtime: ApplicationRuntime | None = None
@@ -72,6 +74,13 @@ class ConfigurationBridge(QObject):
         self._closed = False
         self._feedback: dict[str, dict[str, str]] = {}
         self._runtime = runtime
+        self._mapping_active = False
+        self._mapping_pending = False
+        self._mapping_message = "Pare a leitura automática para iniciar o mapeamento."
+        self._mapping_points: list[dict[str, object]] = []
+        self._last_mapping_snapshot: MappingSnapshot | None = None
+        self._antennas = settings.antennas
+        self._antenna_power = dict(settings.antenna_power_dbm)
         self._audio_enabled = settings.audio_enabled
         self._audio_interval_ms = settings.audio_interval_ms
         self._store = DotEnvReaderConfigurationStore(path)
@@ -104,6 +113,7 @@ class ConfigurationBridge(QObject):
         self.feedbackReceived.connect(self._apply_feedback, Qt.ConnectionType.QueuedConnection)
         self.voiceEventReceived.connect(self._apply_voice_event, Qt.ConnectionType.QueuedConnection)
         self.voicesReceived.connect(self._apply_voices, Qt.ConnectionType.QueuedConnection)
+        self.mappingReceived.connect(self._apply_mapping, Qt.ConnectionType.QueuedConnection)
 
     def _get_fields(self) -> dict[str, object]:
         reader, waveshare = self._reader.current(), self._waveshare.current()
@@ -140,6 +150,31 @@ class ConfigurationBridge(QObject):
     selectedVoice = Property(str, lambda self: self._voice.voice_name, notify=changed)
     dockSuggestions = Property(list, lambda self: ["", *STATION_DOCK_SUGGESTIONS], constant=True)
     testsAvailable = Property(bool, lambda self: self._runtime is not None, constant=True)
+    mappingActive = Property(bool, lambda self: self._mapping_active, notify=changed)
+    mappingPending = Property(bool, lambda self: self._mapping_pending, notify=changed)
+    mappingReserved = Property(
+        bool,
+        lambda self: self._runtime is not None and self._runtime.antenna_mapping_reserved,
+        notify=changed,
+    )
+    mappingMessage = Property(str, lambda self: self._mapping_message, notify=changed)
+    mappingPoints = Property(list, lambda self: list(self._mapping_points), notify=changed)
+
+    def _antenna_levels(self) -> tuple[float, ...]:
+        reader = self._runtime.reader if self._runtime is not None else None
+        levels = getattr(reader, "antenna_power_levels", None)
+        return levels() if callable(levels) else ()
+
+    @Slot(result=list)
+    def antennaSettings(self) -> list[dict[str, object]]:
+        return [
+            {"id": antenna, "power": str(self._antenna_power.get(antenna, ""))}
+            for antenna in self._antennas
+        ]
+
+    @Slot(result=list)
+    def antennaPowerLevels(self) -> list[float]:
+        return list(self._antenna_levels())
 
     def _load_voices(self) -> None:
         try:
@@ -170,7 +205,7 @@ class ConfigurationBridge(QObject):
         self.changed.emit()
 
     def _runtime_feedback(self, event: object) -> None:
-        from rfid_reader.runtime import RuntimeEvent
+        from rfid_reader.runtime import CommandFinished, RuntimeEvent
 
         if not isinstance(event, RuntimeEvent):
             return
@@ -178,6 +213,81 @@ class ConfigurationBridge(QObject):
             self._reader_feedback(event.value)
         elif isinstance(event.value, WaveshareConfigurationFeedback):
             self._waveshare_feedback(event.value)
+        elif (
+            isinstance(event.value, MappingSnapshot)
+            or isinstance(event.value, CommandFinished)
+            and event.value.command
+            in (
+                "antenna_mapping_start",
+                "antenna_mapping_stop",
+            )
+        ):
+            self.mappingReceived.emit(event.value)
+
+    @Slot(object)
+    def _apply_mapping(self, event: object) -> None:
+        from rfid_reader.runtime import CommandFinished
+
+        if self._closed:
+            return
+        if isinstance(event, MappingSnapshot):
+            if event == self._last_mapping_snapshot:
+                return
+            self._last_mapping_snapshot = event
+            self._mapping_active = event.active
+            self._mapping_message = event.message
+            self._mapping_points = [
+                {
+                    "antenna": p.antenna,
+                    "angle": p.angle,
+                    "epc": p.epc,
+                    "rssi": p.rssi,
+                    "timestamp": p.timestamp,
+                }
+                for p in event.points
+            ]
+        elif isinstance(event, CommandFinished):
+            self._mapping_pending = False
+            if not event.success and event.message:
+                self._mapping_message = event.message
+        self.changed.emit()
+
+    @Slot(result=bool)
+    def startMapping(self) -> bool:
+        if self._runtime is None or self._mapping_pending or self._runtime.antenna_mapping_reserved:
+            return False
+        if not self._runtime.start_antenna_mapping():
+            self._mapping_message = "Pare a leitura automática e aguarde o reader ficar disponível."
+            self.changed.emit()
+            return False
+        self._mapping_pending = True
+        self.changed.emit()
+        return True
+
+    @Slot(result=bool)
+    def stopMapping(self) -> bool:
+        if self._runtime is None:
+            return False
+        if not self._runtime.stop_antenna_mapping():
+            return False
+        self._mapping_pending = True
+        self.changed.emit()
+        return True
+
+    @Slot(int)
+    def setMappingAngle(self, angle: int) -> None:
+        if self._runtime is not None:
+            self._runtime.antenna_mapping.set_angle(angle)
+
+    @Slot()
+    def clearMapping(self) -> None:
+        if self._runtime is not None:
+            self._runtime.antenna_mapping.clear()
+
+    @Slot()
+    def refreshMapping(self) -> None:
+        if self._runtime is not None and not self._closed:
+            self._apply_mapping(self._runtime.antenna_mapping.snapshot())
 
     def _reader_feedback(self, event: ReaderConfigurationFeedback) -> None:
         self.feedbackReceived.emit(
@@ -299,6 +409,40 @@ class ConfigurationBridge(QObject):
                 self.feedbackReceived.emit(
                     ConfigurationFeedback(section, True, "Voz salva com sucesso.")
                 )
+            elif section == "antenna":
+                levels = self._antenna_levels()
+                if not levels:
+                    raise ValueError(
+                        "Conecte o reader para validar os níveis de potência disponíveis."
+                    )
+                try:
+                    powers = [float(value.replace(",", ".")) for value in values]
+                except ValueError as error:
+                    raise ValueError("Informe uma potência válida para cada antena.") from error
+                if len(powers) != len(self._antennas) or any(
+                    power not in levels for power in powers
+                ):
+                    raise ValueError(
+                        "Selecione um nível de potência informado pelo reader para cada antena."
+                    )
+                configured = dict(zip(self._antennas, powers, strict=True))
+                self._store.save_values(
+                    {
+                        "RFID_ANTENNA_POWER_DBM": ",".join(
+                            f"{key}:{value}" for key, value in configured.items()
+                        )
+                    }
+                )
+                self._antenna_power = configured
+                reader = self._runtime.reader if self._runtime is not None else None
+                configure = getattr(reader, "configure_antenna_power", None)
+                if callable(configure):
+                    configure(configured)
+                self.feedbackReceived.emit(
+                    ConfigurationFeedback(
+                        section, True, "Potências salvas. Serão usadas na próxima leitura."
+                    )
+                )
         except (EpcFilterValidationError, ValueError) as error:
             self.feedbackReceived.emit(ConfigurationFeedback(section, False, str(error)))
         except Exception as error:
@@ -348,6 +492,10 @@ class ConfigurationBridge(QObject):
     @Slot(str, result=bool)
     def saveVoice(self, name: str) -> bool:
         return self._submit("voice", (name,))
+
+    @Slot(list, result=bool)
+    def saveAntennaPower(self, values: list[object]) -> bool:
+        return self._submit("antenna", tuple(str(value) for value in values))
 
     def _submit_test(self, section: str, values: tuple[str, ...]) -> bool:
         if self._closed or self._busy or self._runtime is None:

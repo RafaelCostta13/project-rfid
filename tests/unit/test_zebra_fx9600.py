@@ -21,11 +21,16 @@ class FakeMessage:
 
 class FakeLowLevelClient:
     def __init__(self) -> None:
+        self.tx_power_table = [0.0, 20.0, 27.0, 28.5]
+        self.power_calls: list[dict[int, int]] = []
         self.start_calls = 0
         self.start_force_regen: list[bool] = []
         self.stop_calls = 0
         self.states: list[int] = []
         self.on_start: Callable[[], None] = lambda: None
+
+    def setTxPower(self, power: dict[int, int]) -> None:
+        self.power_calls.append(power)
 
     def startInventory(self, force_regen_rospec: bool = False) -> None:
         self.start_calls += 1
@@ -138,6 +143,50 @@ def test_connects_once_and_keeps_session_ready() -> None:
 
     assert reader.is_connected()
     assert client.connect_calls == 1
+
+
+def test_peak_rssi_is_preserved_and_invalid_values_are_ignored() -> None:
+    reader = create_reader(FakeSllurpClient())
+    tag = reader._to_tag_read({"EPC": "ABC", "AntennaID": 2, "PeakRSSI": -62})
+    assert tag is not None and tag.rssi == -62 and tag.antenna_id == 2
+    invalid = reader._to_tag_read({"EPC": "ABC", "PeakRSSI": True})
+    assert invalid is not None and invalid.rssi is None
+
+
+def test_antenna_power_applies_to_next_inventory_and_rejects_unsupported() -> None:
+    client = FakeSllurpClient()
+    reader = create_reader(client)
+    assert reader.antenna_power_levels() == ()
+    reader.connect()
+    assert reader.antenna_power_levels() == (20.0, 27.0, 28.5)
+    reader.configure_antenna_power({1: 27.0})
+    assert client.llrp.power_calls == []
+    assert reader.start_inventory(lambda tag: None)
+    assert client.llrp.power_calls == [{1: 2}]
+    reader.stop_inventory()
+    reader.configure_antenna_power({1: 27.1})
+    with pytest.raises(ReaderProtocolError, match="Potência configurada não suportada"):
+        reader.start_inventory(lambda tag: None)
+    assert client.llrp.start_calls == 1
+
+
+def test_distinct_antenna_powers_use_independent_reader_indices() -> None:
+    client = FakeSllurpClient()
+    reader = ZebraFX9600Reader(
+        "reader.local",
+        5084,
+        "fx9600-test",
+        (1, 2),
+        0.1,
+        client_factory=lambda host, port, timeout, antennas: (
+            client,
+            SllurpStateIds(connected=3, inventorying=18),
+        ),
+    )
+    reader.connect()
+    reader.configure_antenna_power({1: 27.0, 2: 28.5})
+    assert reader.start_inventory(lambda tag: None)
+    assert client.llrp.power_calls == [{1: 2, 2: 3}]
 
 
 def test_saved_connection_values_are_used_only_after_next_connect() -> None:

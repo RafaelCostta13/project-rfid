@@ -92,6 +92,7 @@ ScrollView {
                     }
                 }
                 FeedbackText { objectName: "readerFeedback"; feedback: page.settingsBridge ? page.settingsBridge.feedback.reader : null; Layout.fillWidth: true }
+                ActionButton { objectName: "antennaSettingsButton"; text: "Antenas RFID"; variant: "secondary"; enabled: !!page.settingsBridge; onClicked: antennaPopup.open() }
             }
             SettingsCard {
                 objectName: "waveshareSettingsCard"
@@ -316,6 +317,216 @@ ScrollView {
             color: Theme.mutedText
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
+        }
+    }
+    Popup {
+        id: antennaPopup
+        objectName: "antennaSettingsPopup"
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        anchors.centerIn: parent
+        width: Math.min(700, parent.width - 48)
+        height: Math.min(600, parent.height - 48)
+        padding: 20
+        property var drafts: []
+        property var levels: []
+        function reload() {
+            drafts = page.settingsBridge.antennaSettings();
+            levels = page.settingsBridge.antennaPowerLevels();
+        }
+        onOpened: reload()
+        background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
+        ColumnLayout {
+            anchors.fill: parent
+            AppText { text: "Configuração de Antenas RFID"; textStyle: "section" }
+            AppText { objectName: "antennaCount"; text: "Antenas configuradas: " + antennaPopup.drafts.length; color: Theme.secondaryText }
+            AppText { text: "Disponibilidade física das antenas não confirmada pelo reader."; color: Theme.secondaryText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            ScrollView {
+                id: antennaLevelsScroll
+                objectName: "antennaLevelsScroll"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 100
+                clip: true
+                contentWidth: availableWidth
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                AppText {
+                    objectName: "antennaPowerLevels"
+                    width: antennaLevelsScroll.availableWidth
+                    text: antennaPopup.levels.length ? "Níveis suportados (dBm): " + antennaPopup.levels.join(", ") : "Reader indisponível ou níveis de potência não informados. Conecte o reader para salvar."
+                    color: Theme.secondaryText
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideNone
+                }
+            }
+            AppText { text: "Potências salvas serão usadas na próxima leitura."; color: Theme.secondaryText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: parent.availableWidth
+                    Repeater {
+                        id: antennaRepeater
+                        model: antennaPopup.drafts
+                        delegate: RowLayout {
+                            required property var modelData
+                            required property int index
+                            property alias power: antennaPowerField.text
+                            Layout.fillWidth: true
+                            AppText { text: "Antena " + modelData.id + " · status não confirmado"; Layout.fillWidth: true }
+                            FormField {
+                                id: antennaPowerField
+                                label: "Potência (dBm)"
+                                fieldName: "antennaPower" + modelData.id
+                                text: modelData.power
+                                placeholderText: "Não configurada"
+                                Layout.preferredWidth: 150
+                            }
+                        }
+                    }
+                }
+            }
+            FeedbackText { feedback: page.settingsBridge ? page.settingsBridge.feedback.antenna : null; Layout.fillWidth: true }
+            RowLayout {
+                ActionButton { objectName: "antennaMapOpenButton"; text: "Mapa de leitura"; variant: "secondary"; onClicked: mappingPopup.open() }
+                ActionButton { objectName: "antennaReloadButton"; text: "Recarregar"; variant: "secondary"; enabled: !page.isBusy; onClicked: antennaPopup.reload() }
+                ActionButton {
+                    objectName: "antennaSaveButton"
+                    text: "Salvar configurações"
+                    enabled: !page.isBusy
+                    onClicked: {
+                        let values = [];
+                        for (let i = 0; i < antennaRepeater.count; ++i)
+                            values.push(antennaRepeater.itemAt(i).power);
+                        page.settingsBridge.saveAntennaPower(values);
+                    }
+                }
+                ActionButton { text: "Fechar"; variant: "secondary"; onClicked: antennaPopup.close() }
+            }
+        }
+    }
+    Popup {
+        id: mappingPopup
+        objectName: "antennaMappingPopup"
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        anchors.centerIn: parent
+        width: Math.min(1100, parent.width - 32)
+        height: Math.min(760, parent.height - 32)
+        padding: 18
+        closePolicy: Popup.NoAutoClose
+        property var antennaList: []
+        property var colors: ["#55aaff", "#ff7e89", "#58d59e", "#f4cc6b", "#bf99ff", "#ffad73", "#56d5df", "#ec8ed5", "#b1df6b", "#e0b0a0", "#899cff", "#d9df9c"]
+        function antennaColor(id) {
+            for (let i = 0; i < antennaList.length; ++i)
+                if (antennaList[i].id === id) return colors[i % colors.length];
+            return "#ffffff";
+        }
+        onOpened: { antennaList = page.settingsBridge.antennaSettings(); page.settingsBridge.setMappingAngle(angleInput.value); mapCanvas.requestPaint(); }
+        onClosed: if (page.settingsBridge.mappingReserved) page.settingsBridge.stopMapping()
+        Timer { interval: 250; repeat: true; running: mappingPopup.visible && !!page.settingsBridge && page.settingsBridge.mappingActive; onTriggered: page.settingsBridge.refreshMapping() }
+        background: Rectangle { color: Theme.surface; border.color: Theme.border; radius: Theme.radius }
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+            AppText { text: "Mapa de leitura assistido"; textStyle: "section" }
+            AppText { text: "Informe o ângulo da etiqueta. O mapa mostra RSSI, não distância ou posição física."; color: Theme.secondaryText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            RowLayout {
+                AppText { text: "Ângulo (graus)" }
+                SpinBox { id: angleInput; objectName: "mappingAngle"; from: -180; to: 180; stepSize: 30; value: 0; editable: true; onValueChanged: if (page.settingsBridge) page.settingsBridge.setMappingAngle(value) }
+                ActionButton { objectName: "mappingStartButton"; text: "Iniciar mapeamento"; enabled: !!page.settingsBridge && page.settingsBridge.testsAvailable && !page.settingsBridge.mappingReserved && !page.settingsBridge.mappingPending; onClicked: page.settingsBridge.startMapping() }
+                ActionButton { objectName: "mappingStopButton"; text: "Parar"; variant: "danger"; enabled: !!page.settingsBridge && page.settingsBridge.mappingReserved && !page.settingsBridge.mappingPending; onClicked: page.settingsBridge.stopMapping() }
+                ActionButton { objectName: "mappingClearButton"; text: "Limpar mapa"; variant: "secondary"; onClicked: page.settingsBridge.clearMapping() }
+                ActionButton { objectName: "mappingCloseButton"; text: "Fechar"; variant: "secondary"; onClicked: mappingPopup.close() }
+            }
+            AppText { objectName: "mappingStatus"; text: page.settingsBridge ? page.settingsBridge.mappingMessage : ""; color: Theme.secondaryText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 16
+                ColumnLayout {
+                    Layout.preferredWidth: Math.min(mappingPopup.width * 0.48, 450)
+                    Layout.fillHeight: true
+                    Canvas {
+                        id: mapCanvas
+                        objectName: "mappingCanvas"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        onPaint: {
+                            const ctx = getContext("2d");
+                            ctx.reset();
+                            const cx = width / 2, cy = height / 2;
+                            const radius = Math.max(1, Math.min(width, height) / 2 - 32);
+                            ctx.strokeStyle = "#546170"; ctx.lineWidth = 1;
+                            for (let ring = 1; ring <= 3; ++ring) {
+                                ctx.beginPath(); ctx.arc(cx, cy, radius * ring / 3, 0, Math.PI * 2); ctx.stroke();
+                            }
+                            ctx.beginPath(); ctx.moveTo(cx - radius, cy); ctx.lineTo(cx + radius, cy); ctx.moveTo(cx, cy - radius); ctx.lineTo(cx, cy + radius); ctx.stroke();
+                            ctx.fillStyle = "#c0cbd8"; ctx.font = "12px sans-serif";
+                            ctx.fillText("0°", cx - 8, cy - radius - 8);
+                            ctx.fillText("90°", cx + radius + 4, cy + 4);
+                            ctx.fillText("±180°", cx - 16, cy + radius + 18);
+                            ctx.fillText("-90°", cx - radius - 30, cy + 4);
+                            let points = page.settingsBridge ? page.settingsBridge.mappingPoints : [];
+                            for (let a = 0; a < mappingPopup.antennaList.length; ++a) {
+                                let antenna = mappingPopup.antennaList[a].id;
+                                let series = points.filter(function(p) { return p.antenna === antenna; }).sort(function(x, y) { return x.angle - y.angle; });
+                                ctx.strokeStyle = mappingPopup.antennaColor(antenna); ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = 2;
+                                ctx.beginPath();
+                                for (let i = 0; i < series.length; ++i) {
+                                    let p = series[i], theta = p.angle * Math.PI / 180;
+                                    let strength = Math.max(0, Math.min(1, (p.rssi + 90) / 60));
+                                    let x = cx + Math.sin(theta) * radius * strength, y = cy - Math.cos(theta) * radius * strength;
+                                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                                }
+                                ctx.stroke();
+                                for (let i = 0; i < series.length; ++i) {
+                                    let p = series[i], theta = p.angle * Math.PI / 180;
+                                    let strength = Math.max(0, Math.min(1, (p.rssi + 90) / 60));
+                                    ctx.beginPath(); ctx.arc(cx + Math.sin(theta) * radius * strength, cy - Math.cos(theta) * radius * strength, 4, 0, Math.PI * 2); ctx.fill();
+                                }
+                            }
+                        }
+                        Connections { target: page.settingsBridge; function onChanged() { mapCanvas.requestPaint(); } }
+                    }
+                    AppText { text: "Escala visual: centro ≤ -90 dBm; borda ≥ -30 dBm."; color: Theme.secondaryText; textStyle: "caption"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        Repeater { model: mappingPopup.antennaList; delegate: AppText { required property var modelData; text: "● Antena " + modelData.id; color: mappingPopup.antennaColor(modelData.id); textStyle: "caption" } }
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    AppText { text: "Leituras agregadas · maior RSSI"; textStyle: "card" }
+                    AppText { text: "Horário UTC  ·  EPC  ·  Antena  ·  RSSI  ·  Ângulo"; color: Theme.secondaryText; textStyle: "caption" }
+                    ScrollView {
+                        objectName: "mappingReadings"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        contentWidth: availableWidth
+                        clip: true
+                        ColumnLayout {
+                            width: parent.availableWidth
+                            Repeater {
+                                model: page.settingsBridge ? page.settingsBridge.mappingPoints : []
+                                delegate: AppText {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    text: modelData.timestamp + "  ·  " + modelData.epc + "  ·  " + modelData.antenna + "  ·  " + modelData.rssi + " dBm  ·  " + modelData.angle + "°"
+                                    color: mappingPopup.antennaColor(modelData.antenna)
+                                    textStyle: "caption"
+                                    wrapMode: Text.WrapAnywhere
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     Popup {

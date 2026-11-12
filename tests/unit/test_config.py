@@ -44,6 +44,17 @@ def test_loads_complete_valid_configuration_and_converts_types() -> None:
     )
 
 
+@pytest.mark.parametrize("raw", ["1:27,2:28:5", "1:27", "1:nan,2:28", "1:27,1:28"])
+def test_invalid_antenna_power_configuration_is_rejected(raw: str) -> None:
+    with pytest.raises(ConfigurationError, match="RFID_ANTENNA_POWER_DBM"):
+        load_config({"RFID_ANTENNAS": "1,2", "RFID_ANTENNA_POWER_DBM": raw})
+
+
+def test_loads_independent_antenna_powers() -> None:
+    settings = load_config({"RFID_ANTENNAS": "1,2", "RFID_ANTENNA_POWER_DBM": "1:27,2:28.5"})
+    assert settings.antenna_power_dbm == ((1, 27.0), (2, 28.5))
+
+
 def test_loads_multiple_antennas_and_normalizes_duplicates() -> None:
     environment = valid_environment()
     environment["RFID_ANTENNAS"] = "1, 2,1,4"

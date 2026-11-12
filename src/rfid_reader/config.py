@@ -114,6 +114,7 @@ class Settings:
     audio_enabled: bool = DEFAULT_AUDIO_ENABLED
     audio_interval_ms: int = DEFAULT_AUDIO_INTERVAL_MS
     voice_name: str = "Microsoft Maria Desktop"
+    antenna_power_dbm: tuple[tuple[int, float], ...] = ()
 
     @property
     def reader_connection(self) -> ReaderConnectionSettings:
@@ -497,6 +498,28 @@ def _audio_interval(environment: Mapping[str, str]) -> int:
     return interval
 
 
+def _antenna_power(
+    environment: Mapping[str, str], antennas: tuple[int, ...]
+) -> tuple[tuple[int, float], ...]:
+    raw = environment.get("RFID_ANTENNA_POWER_DBM", "").strip()
+    if not raw:
+        return ()
+    try:
+        parts = [item.split(":") for item in raw.split(",")]
+        if any(len(part) != 2 for part in parts):
+            raise ValueError
+        pairs = tuple((int(part[0]), float(part[1])) for part in parts)
+        if len(pairs) != len(antennas) or {key for key, _ in pairs} != set(antennas):
+            raise ValueError
+        if any(not math.isfinite(value) for _, value in pairs):
+            raise ValueError
+        return pairs
+    except (ValueError, IndexError) as error:
+        raise ConfigurationError(
+            "RFID_ANTENNA_POWER_DBM deve conter ID:potência para cada antena"
+        ) from error
+
+
 def load_config(environment: Mapping[str, str] | None = None) -> Settings:
     """Carrega e valida configurações de um mapeamento ou do ambiente do processo."""
 
@@ -510,11 +533,12 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
             "RFID_EPC_ALLOWED_PREFIXES deve conter ao menos um prefixo "
             "quando o filtro está habilitado"
         )
+    antennas = _antennas(source)
     return Settings(
         reader_host=reader_connection.host,
         reader_port=reader_connection.port,
         reader_name=reader_connection.name,
-        antennas=_antennas(source),
+        antennas=antennas,
         deduplication_window_seconds=_deduplication_window(source),
         connection_timeout_seconds=_positive_float(
             source,
@@ -553,4 +577,5 @@ def load_config(environment: Mapping[str, str] | None = None) -> Settings:
         audio_enabled=_boolean(source, "RFID_AUDIO_ENABLED", DEFAULT_AUDIO_ENABLED),
         audio_interval_ms=_audio_interval(source),
         voice_name=source.get("RFID_VOICE_NAME", "Microsoft Maria Desktop").strip(),
+        antenna_power_dbm=_antenna_power(source, antennas),
     )

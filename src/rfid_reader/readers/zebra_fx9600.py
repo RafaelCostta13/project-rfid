@@ -26,6 +26,10 @@ class SllurpMessage(Protocol):
 
 
 class SllurpLowLevelClient(Protocol):
+    tx_power_table: list[float]
+
+    def setTxPower(self, tx_power: dict[int, int]) -> None: ...
+
     def startInventory(self, force_regen_rospec: bool = False) -> object: ...
 
     def stopPolitely(self, onCompletion: Callable[..., None] | None = None) -> object: ...
@@ -130,6 +134,7 @@ class ZebraFX9600Reader:
         if not ids or any(type(value) is not int or value <= 0 for value in ids):
             raise ValueError("Informe IDs de antena inteiros positivos, em uma lista não vazia.")
         self._antenna_ids = tuple(dict.fromkeys(ids))
+        self._antenna_power: dict[int, float] = {}
         self._timeout_seconds = timeout_seconds
         self._client_factory = client_factory
         self._client: SllurpReaderClient | None = None
@@ -221,6 +226,19 @@ class ZebraFX9600Reader:
             port,
         )
 
+    def antenna_power_levels(self) -> tuple[float, ...]:
+        """Retorna níveis informados pelo reader conectado, sem presumir faixa."""
+        with self._lock:
+            client = self._client
+        if client is None or not self.is_connected():
+            return ()
+        return tuple(sorted(set(client.llrp.tx_power_table[1:])))
+
+    def configure_antenna_power(self, values: dict[int, float]) -> None:
+        """Prepara potência transitória para a próxima janela de inventário."""
+        with self._lock:
+            self._antenna_power = dict(values)
+
     def _on_configuration_response(
         self,
         client: SllurpReaderClient,
@@ -261,6 +279,17 @@ class ZebraFX9600Reader:
             if client is None:
                 raise ReaderConnectionError("o reader não está conectado")
             try:
+                with self._lock:
+                    power = dict(self._antenna_power)
+                if power:
+                    table = client.llrp.tx_power_table
+                    if set(power) != set(self._antenna_ids) or any(
+                        value not in table[1:] for value in power.values()
+                    ):
+                        raise ReaderProtocolError("Potência configurada não suportada pelo reader.")
+                    client.llrp.setTxPower(
+                        {antenna: table.index(value, 1) for antenna, value in power.items()}
+                    )
                 client.llrp.startInventory(force_regen_rospec=True)
             except Exception as error:
                 with self._lock:
@@ -268,6 +297,8 @@ class ZebraFX9600Reader:
                     self._accept_reports = False
                     self._tag_callback = None
                     self._stop_complete.set()
+                if isinstance(error, ReaderProtocolError):
+                    raise
                 raise ReaderProtocolError("não foi possível iniciar o inventário") from error
             LOGGER.info(
                 "inventory_start_requested reader_id=%s antennas=%s",
@@ -368,12 +399,14 @@ class ZebraFX9600Reader:
             LOGGER.warning("missing_epc reader_id=%s", self._reader_id)
             return None
         antenna = raw_tag.get("AntennaID")
+        rssi = raw_tag.get("PeakRSSI")
         seen_count = raw_tag.get("TagSeenCount")
         return TagRead(
             epc=epc,
             reader_id=self._reader_id,
             antenna_id=antenna if isinstance(antenna, int) else None,
             read_at=datetime.now(UTC),
+            rssi=rssi if type(rssi) is int else None,
             seen_count=seen_count if isinstance(seen_count, int) else None,
         )
 

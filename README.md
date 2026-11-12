@@ -2,7 +2,7 @@
 
 Aplicação Python para comunicação com leitores RFID, inicialmente o Zebra FX9600.
 A interface oficial usa PySide6 + QML, com indicadores de disponibilidade,
-inventário automático por DI1/DI2, diagnóstico Waveshare e EPCs confirmados e
+inventário automático por sequências de sensores, diagnóstico Waveshare e EPCs confirmados e
 registrados pelo Backend Rails. O runtime e os serviços independem da interface.
 
 ## Requisitos
@@ -89,7 +89,7 @@ rfid-reader --env-file .env
 
 A aplicação mantém uma única sessão LLRP com o FX9600 e a reutiliza tanto para o
 status quanto para o inventário. Na página **Start**, **Iniciar leitura** habilita
-o automático e aguarda DI1; **Parar leitura** cancela o ciclo. A tabela apresenta
+o automático e aguarda DI1 → DI4; **Parar leitura** cancela o ciclo. A tabela apresenta
 somente EPCs confirmados pela base, com status, cliente, nota fiscal, volume,
 pedido e doca quando disponibilizados pelo Backend. EPCs não encontrados,
 inválidos ou afetados por erro técnico não criam linhas. Campos ausentes ou nulos
@@ -141,37 +141,40 @@ relé pode ser ligado ou desligado separadamente. **Voltar** encerra o teste e
 devolve a sessão COM ao controle operacional. A tela usa a configuração salva,
 não aciona relés por conta própria e não inicia o inventário RFID.
 
-## Operação automática por sensores (RF012 — Windows)
+## Operação automática por sensores (RF040 — Windows)
 
 O worker operacional da Waveshare utiliza uma única sessão serial. Quando
 Internet, RFID, Waveshare e Sistema estão conectados, CH1 indica que o
 sistema está apto.
 Na página **Start**, **Iniciar leitura** habilita o modo automático, mas não
 inicia imediatamente o inventário.
-DI1/DI2 `True` significa **DI ATIVA / FEIXE LIVRE**; `False` significa
+DI1, DI2, DI4 e DI5 `True` significa **DI ATIVA / FEIXE LIVRE**; `False` significa
 **DI DESATIVADA / FEIXE INTERROMPIDO**, conforme o código físico validado.
-A primeira amostra apenas estabelece o estado inicial. Após ambos os feixes
-estarem livres, a borda de DI1 `True → False` inicia o serviço de inventário
-existente. CH2 só liga após confirmação do início pelo Zebra.
+A primeira amostra apenas estabelece o estado inicial. Com os quatro feixes
+livres, DI1 `True → False` arma a entrada e uma borda posterior em DI4 inicia
+o inventário. DI2 deve estar livre para iniciar. CH2 só liga após confirmação
+do início pelo Zebra; acionamentos simultâneos não comprovam a ordem.
 
 O modo automático consulta as entradas a cada 50 ms, além do tempo das operações
-Modbus, sem debounce artificial. Ao detectar DI2 interrompida, solicita Stop
-imediatamente; um timer independente limita cada ciclo a 60 segundos e é cancelado
-na parada. Cada timer tem uma geração, impedindo interferência em ciclos novos.
+Modbus, sem debounce artificial nos sensores. DI5 seguido de DI2 encerra
+normalmente a passagem; o acionamento isolado de cada um é ignorado para esse fim.
+Um timer independente limita cada janela a 60 segundos e é cancelado na parada.
+Cada timer tem uma geração, impedindo interferência em ciclos novos.
 As latências físicas incluem polling, comunicação serial e confirmação LLRP.
 
 | Condição | RFID | CH1 | CH2 | CH3 |
 |---|---|---|---|---|
 | Sistema apto, aguardando DI1 | OFF | ON | OFF | OFF |
-| Ciclo iniciado por DI1 | ON | OFF | ON | OFF |
+| Ciclo iniciado por DI1 → DI4 | ON | OFF | ON | OFF |
 | Internet, RFID ou Sistema indisponível, com Waveshare acessível | OFF | OFF | OFF | ON |
 | Waveshare indisponível | OFF | estado desconhecido | estado desconhecido | estado desconhecido |
 
-Somente a borda de DI2 `True → False` ou o timeout encerra o ciclo. Depois da
-parada, uma nova borda de DI1 é obrigatória; manter DI1 interrompida não reinicia
-o RFID. Os relés são desligados antes de ligar o próximo indicador, e seus estados
-só são apresentados após confirmação. CH4–CH8 não são escritos pela automação;
-DI3–DI5 continuam disponíveis apenas para diagnóstico.
+O timeout para o inventário, mas preserva a passagem para reabertura por DI3 ou
+encerramento por DI5 → DI2. DI3 usa o debounce existente e, ao reabrir, invalida
+um DI5 pendente; um novo DI5 → DI2 será necessário. Uma nova passagem exige outra
+sequência DI1 → DI4. Os relés são desligados antes de ligar o próximo indicador,
+e seus estados só são apresentados após confirmação. CH4–CH8 não são escritos
+pela automação.
 
 Enquanto o modo automático estiver habilitado, comandos manuais de CH1–CH3 ficam
 bloqueados e CH4–CH8 continuam disponíveis. **Parar leitura** cancela o timer,
@@ -187,8 +190,8 @@ uma leitura por si só.
 
 O processamento de EPCs, consultas, deduplicação, tabela e contador reutilizam
 a sessão existente. Validação física ainda necessária no Windows: reproduzir
-feixes livres → DI1 interrompida → ambos interrompidos → feixes livres, verificar
-timeout e desconexões com Waveshare/FX9600 reais. Testes automatizados usam fakes
+feixes livres → DI1 → DI4 → DI5 → DI2, verificar pedal, timeout e desconexões
+com Waveshare/FX9600 reais. Testes automatizados usam fakes
 e não comprovam funcionamento no equipamento.
 
 ## Doca e disponibilidade da base (RF013 — Windows)
@@ -309,8 +312,8 @@ python -m rfid_reader.cli --env-file .env
 
 `rfid-reader`, `rfid-reader show` e `rfid-reader-qt` abrem a operação Qt.
 `--operate` continua aceito como opção explícita. Iniciar Leitura habilita o modo
-automático e aguarda DI1 ATIVA → DESATIVADA; o inventário termina por DI2,
-Stop ou timeout de 60 segundos. A tabela e o contador recebem somente EPCs
+automático e aguarda DI1 → DI4; a passagem termina por DI5 → DI2 ou Stop,
+e o timeout de 60 segundos permite complementação por DI3. A tabela e o contador recebem somente EPCs
 encontrados e registrados pelo Backend, com deduplicação por sessão. POSTs
 não são repetidos automaticamente em timeout. As configurações e o diagnóstico
 DI1–DI5/CH1–CH8 usam os mesmos serviços e a mesma porta serial da operação.
@@ -321,6 +324,24 @@ O monitor continua observando `database`; a interface apresenta somente
 Sistema, e a aptidão preserva a regra de Sistema do ADR-013.
 Configurações de conexão salvas são usadas nas próximas conexões; uma sessão
 serial já aberta mantém os parâmetros com que foi iniciada.
+
+Em Configurações RFID, **Antenas RFID** mostra os IDs configurados e permite
+salvar uma potência por antena. A disponibilidade física das antenas não é
+verificada. Para salvar, conecte o reader e escolha apenas valores da tabela de
+níveis em dBm que ele informa. Sem conexão, os valores locais permanecem
+visíveis. A potência salva é aplicada à próxima janela de inventário, sem
+interromper uma leitura em andamento. A variável opcional
+`RFID_ANTENNA_POWER_DBM` contém pares como `1:27.0,2:28.5`; os IDs devem
+corresponder a `RFID_ANTENNAS`. Na ausência da variável, mantém-se o comportamento
+anterior da biblioteca. A homologação dos níveis e antenas requer o FX9600 físico.
+
+Na tela de antenas, **Mapa de leitura** permite uma medição assistida: pare a
+leitura automática, selecione o ângulo da etiqueta e inicie o mapeamento. O mapa
+usa o maior RSSI por EPC, antena e ângulo, com escala visual de -90 a -30 dBm;
+a lista preserva o RSSI original. Leituras sem antena ou RSSI não são plotadas.
+O ângulo é informado pelo operador e o gráfico não mede distância ou posição
+física. O diagnóstico não envia EPCs ao backend e não registra passagens. Pare
+o mapa antes de retomar a operação; fechar a tela também solicita a parada.
 
 Sem opções, os pontos de entrada e o executável Windows iniciam a operação Qt.
 `--preview` e `--configure` abrem sem hardware. A substituição final foi

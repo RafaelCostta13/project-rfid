@@ -1,4 +1,4 @@
-"""Orquestração do inventário automático acionado por DI1 e DI2."""
+"""Orquestração do inventário pelas sequências de sensores do portal."""
 
 from __future__ import annotations
 
@@ -69,8 +69,10 @@ class AutomaticInventoryController:
         self._backend_observed = False
         self._enabled = False
         self._closed = False
-        self._previous: tuple[bool, bool] | None = None
+        self._previous: tuple[bool, bool, bool, bool] | None = None
         self._armed = False
+        self._entry_pending = False
+        self._exit_pending = False
         self._active = False
         self._awaiting_completion = False
         self._pedal_candidate: bool | None = None
@@ -111,6 +113,8 @@ class AutomaticInventoryController:
                 self._awaiting_completion = False
                 self._previous = None
                 self._armed = False
+                self._entry_pending = False
+                self._exit_pending = False
                 self._finish(f"{kind.value}_unavailable")
                 if kind is ConnectionKind.WAVESHARE and self._enabled:
                     self._enabled = False
@@ -141,6 +145,8 @@ class AutomaticInventoryController:
             self._enabled = True
             self._previous = None
             self._armed = False
+            self._entry_pending = False
+            self._exit_pending = False
             self._relays.clear()
             LOGGER.info("automatic_inventory_enabled")
         self._notify_mode(True)
@@ -156,6 +162,9 @@ class AutomaticInventoryController:
     def manual_stop(self) -> bool:
         with self._lock:
             if self._enabled:
+                self._awaiting_completion = False
+                self._entry_pending = False
+                self._exit_pending = False
                 return self._finish("manual_stop")
             return self._inventory.stop()
 
@@ -167,6 +176,8 @@ class AutomaticInventoryController:
             self._awaiting_completion = False
             self._previous = None
             self._armed = False
+            self._entry_pending = False
+            self._exit_pending = False
             stopped = self._finish("automatic_disabled")
             if awaiting and not self._closed:
                 self._cycle_finished_listener("automatic_disabled")
@@ -195,12 +206,16 @@ class AutomaticInventoryController:
             self._timer.cancel()
             self._timer = None
         self._armed = False
+        self._entry_pending = False
+        if reason != "timeout_60_seconds":
+            self._exit_pending = False
         if not self._active:
             return False
         self._active = False
         LOGGER.info("automatic_inventory_stop reason=%s", reason)
         stopped = self._inventory.stop()
         if not stopped:
+            self._exit_pending = False
             LOGGER.error("automatic_inventory_stop_failed reason=%s", reason)
         elif not self._closed and reason in {
             "automatic_disabled",
@@ -219,6 +234,7 @@ class AutomaticInventoryController:
                 )
 
     def _start_cycle(self, *, resume: bool) -> None:
+        self._exit_pending = False
         started = self._inventory.resume() if resume else self._inventory.start()
         if not started:
             LOGGER.error("automatic_inventory_start_failed")
@@ -252,18 +268,26 @@ class AutomaticInventoryController:
         with self._lock:
             if self._closed:
                 return
-            if len(inputs) < 2:
-                raise WaveshareConnectionError("Amostra sem DI1/DI2.")
-            entry_clear, exit_clear = inputs[:2]
+            if len(inputs) < 5:
+                raise WaveshareConnectionError("Amostra incompleta: são necessárias DI1 a DI5.")
+            entry_clear, exit_clear, entry_second_clear, exit_first_clear = (
+                inputs[0],
+                inputs[1],
+                inputs[3],
+                inputs[4],
+            )
             pedal_pressed = self._pedal_pressed(inputs)
             previous = self._previous
-            current = (entry_clear, exit_clear)
+            current = (entry_clear, exit_clear, entry_second_clear, exit_first_clear)
             self._previous = current
             if previous != current:
-                LOGGER.info("automatic_beams di1_clear=%s di2_clear=%s", *current)
+                LOGGER.info(
+                    "automatic_beams di1_clear=%s di2_clear=%s di4_clear=%s di5_clear=%s",
+                    *current,
+                )
                 if previous is not None:
-                    for channel, (before, after) in enumerate(
-                        zip(previous, current, strict=True), 1
+                    for channel, (before, after) in zip(
+                        (1, 2, 4, 5), zip(previous, current, strict=True), strict=True
                     ):
                         if before != after:
                             LOGGER.info(
@@ -278,10 +302,14 @@ class AutomaticInventoryController:
                 if previous is None:
                     self._armed = all(current)
                 else:
-                    entry_interrupted = previous[0] and not entry_clear
-                    exit_interrupted = previous[1] and not exit_clear
-                    if (self._active or self._awaiting_completion) and exit_interrupted:
-                        LOGGER.info("automatic_exit_sensor_interrupted")
+                    di1 = previous[0] and not entry_clear
+                    di2 = previous[1] and not exit_clear
+                    di4 = previous[2] and not entry_second_clear
+                    di5 = previous[3] and not exit_first_clear
+                    passage = self._active or self._awaiting_completion
+                    if passage and di2 and self._exit_pending:
+                        self._exit_pending = False
+                        LOGGER.info("automatic_exit_sequence_complete")
                         if self._awaiting_completion:
                             self._awaiting_completion = False
                             self._cycle_finished_listener("exit_sensor_interrupted")
@@ -289,17 +317,27 @@ class AutomaticInventoryController:
                             self._finish("exit_sensor_interrupted")
                     elif self._awaiting_completion and pedal_pressed and exit_clear:
                         self._start_cycle(resume=True)
-                    elif (
-                        entry_interrupted
-                        and exit_clear
-                        and self._armed
-                        and not self._active
-                        and not self._awaiting_completion
-                    ):
+                    elif passage and di5 and di2:
+                        self._exit_pending = False
+                        LOGGER.info("automatic_exit_order_unknown")
+                    elif passage and di5:
+                        self._exit_pending = True
+                        LOGGER.info("automatic_exit_first_sensor_interrupted")
+                    elif not passage and (di2 or di5):
+                        self._entry_pending = False
                         self._armed = False
-                        LOGGER.info("automatic_entry_sensor_interrupted")
+                    elif not passage and di1 and di4 and not self._entry_pending:
+                        self._entry_pending = False
+                        LOGGER.info("automatic_entry_order_unknown")
+                    elif not passage and di1 and exit_clear and self._armed:
+                        self._entry_pending = True
+                        self._armed = False
+                        LOGGER.info("automatic_entry_first_sensor_interrupted")
+                    elif not passage and di4 and exit_clear and self._entry_pending:
+                        self._entry_pending = False
+                        LOGGER.info("automatic_entry_sequence_complete")
                         self._start_cycle(resume=False)
-                    elif not self._active and all(current):
+                    elif not passage and all(current) and not self._entry_pending:
                         self._armed = True
         # Não segurar o lock durante I/O serial: o timer deve parar o RFID
         # mesmo quando uma confirmação Modbus estiver bloqueada.

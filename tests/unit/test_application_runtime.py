@@ -37,6 +37,16 @@ def test_runtime_forwards_full_antenna_configuration(tmp_path: Path, antennas: s
             app.close()
 
 
+def test_runtime_loads_saved_antenna_power(tmp_path: Path) -> None:
+    settings = load_config({"RFID_ANTENNAS": "1,2", "RFID_ANTENNA_POWER_DBM": "1:27,2:28.5"})
+    with patch("rfid_reader.runtime.ZebraFX9600Reader") as factory:
+        app = ApplicationRuntime(settings, tmp_path / ".env")
+        try:
+            factory.return_value.configure_antenna_power.assert_called_once_with({1: 27.0, 2: 28.5})
+        finally:
+            app.close()
+
+
 class FakeReader:
     def __init__(self) -> None:
         self.connected = False
@@ -188,10 +198,12 @@ def test_controlled_sensor_stop_publishes_session_completion(runtime: Applicatio
     wait_until(lambda: runtime.automatic.ready)
     assert runtime.start_automatic()
     wait_until(lambda: runtime.automatic.enabled)
-    runtime.automatic.update((True, True, False, True, False), lambda channel, state: state)
-    runtime.automatic.update((False, True, False, True, False), lambda channel, state: state)
+    runtime.automatic.update((True, True, False, True, True), lambda channel, state: state)
+    runtime.automatic.update((False, True, False, True, True), lambda channel, state: state)
+    runtime.automatic.update((False, True, False, False, True), lambda channel, state: state)
     wait_until(lambda: runtime.inventory.status is InventoryStatus.READING)
-    runtime.automatic.update((False, False, False, True, False), lambda channel, state: state)
+    runtime.automatic.update((False, True, False, False, False), lambda channel, state: state)
+    runtime.automatic.update((False, False, False, False, False), lambda channel, state: state)
     wait_until(
         lambda: any(
             event.channel == "session_completed"
