@@ -2,27 +2,52 @@
 
 ## 1. Objetivo
 
-Referência permanente para o Codex sobre as configurações, testes
-físicos e lógica validada da placa **Waveshare Modbus RTU Relay (D)**
-usada no projeto RFID.
+Referência sobre a placa e os testes históricos realizados no projeto RFID.
+As seções 3 a 16 registram um protótipo anterior de dois sensores: seus
+tempos e regras não descrevem necessariamente a operação atual. Para a
+sequência vigente de quatro sensores, consultar o RF040 e a implementação.
 
-> **Baseline validada:** comunicação Modbus, DI1/DI2, CH1/CH2/CH3 e
-> lógica de timer foram testados fisicamente e funcionaram. Não alterar
-> essas regras sem requisito explícito.
+> **Teste histórico:** comunicação Modbus, DI1/DI2, CH1/CH2/CH3 e
+> lógica de timer do protótipo foram relatados como testados fisicamente.
+> Isso não comprova a validação física dos requisitos posteriores.
 
 ## 2. Hardware e comunicação
 
--   Placa: Waveshare Modbus RTU Relay (D)
+-   Placa: Waveshare Industrial Modbus RTU 8-Channel Relay Module (D), RS9625
 -   Comunicação: RS485 / Modbus RTU
 -   8 entradas digitais (DI1--DI8)
 -   8 saídas a relé (CH1--CH8)
 -   Relés com contatos COM / NO / NC
 -   Conversor: USB → RS485
--   Porta validada no Windows: `COM5`
+-   Porta usada no teste histórico no Windows: `COM5`
 -   Baudrate: `9600`
 -   Formato: `8N1`
 -   Timeout usado: `2 s`
 -   Device ID: `1`
+
+Os parâmetros acima registram o teste histórico; os valores efetivos da
+instalação atual dependem da configuração local e precisam ser confirmados.
+
+### Especificações fornecidas para o modelo RS9625
+
+Dados informados pelo usuário; não foram verificados nesta atualização:
+
+- Alimentação: 7–36 V CC; interface RS485 e protocolo Modbus RTU.
+- Taxas seriais suportadas: 4800, 9600, 19200, 38400, 57600, 115200,
+  128000 e 256000 baud; formato padrão informado: 9600, N, 8, 1.
+- Endereço RS485 configurável de 1 a 255.
+- Oito relés com um contato normalmente aberto e um normalmente fechado
+  por canal; capacidade informada: até 10 A, 250 V CA ou 30 V CC.
+- Oito entradas digitais de 5–36 V, passivas ou ativas, NPN ou PNP,
+  com isolamento optoacoplado bidirecional. O projeto usa DI1 a DI5.
+- A especificação informa debounce interno nas entradas; sua duração,
+  eventual configuração e efeito sobre pulsos curtos ainda não foram
+  confirmados. Investigar durante o RF041 sem alterar a placa automaticamente.
+- São informados isolamento de alimentação e comunicação, proteção contra
+  surtos, fusível rearmável, proteção contra inversão de polaridade e LEDs
+  de estado, transmissão e recepção.
+- São informadas funções temporizadas de relé e associação das entradas aos
+  relés; sua existência não autoriza alterar configurações do equipamento.
 
 ## 3. PyModbus
 
