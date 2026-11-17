@@ -174,6 +174,7 @@ class ApplicationRuntime:
             deps.timer_factory,
             self._on_mode,
             self._on_controlled_cycle_finished,
+            lambda: self.lookup.identified_count,
         )
         self.commands = ThreadPoolExecutor(max_workers=1, thread_name_prefix="application-command")
         self.reader_configuration = ReaderConfigurationService(

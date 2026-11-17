@@ -6,7 +6,7 @@ Rectangle {
     id: container
     required property var tableModel
     property int selectedRow: -1
-    readonly property int tableRowHeight: 36
+    readonly property int tableRowHeight: 26
     readonly property var headings: tableModel.columnTitles
     color: Theme.surface
     border.color: Theme.border
@@ -86,7 +86,7 @@ Rectangle {
                 anchors.rightMargin: 10
                 text: cellText
                 textStyle: "tableCell"
-                font.pixelSize: 12
+                font.pixelSize: 11
                 verticalAlignment: Text.AlignVCenter
                 color: column === 0 && !isExtraBox ? Theme.success
                      : isExtraBox ? Theme.extraBoxAccent : Theme.text

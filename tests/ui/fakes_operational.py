@@ -71,7 +71,7 @@ class Reader:
 
 class Timer:
     def __init__(self, seconds: float, callback: Callable[[], None]) -> None:
-        assert seconds == 60
+        assert seconds == 20
         self.callback = callback
         self.cancelled = False
         self.started = False

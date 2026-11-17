@@ -46,6 +46,7 @@ class OperationalBridge(QObject):
         self._model = TagTableModel(self)
         self._simulation_model = TagTableModel(self)
         self._summary = TagLookupSessionSummary()
+        self._identified_count = 0
         self.runtime = runtime
         self._inventory = runtime.inventory.status
         self._automatic = runtime.automatic.enabled
@@ -137,9 +138,9 @@ class OperationalBridge(QObject):
         if self._message:
             return self._message
         if self._inventory is InventoryStatus.READING:
-            return "Inventário ativo · saída DI5 → DI2 · limite de 60 segundos."
+            return "Inventário ativo · saída DI2 · limite de 20 segundos."
         if self._automatic and self._ready():
-            return "Modo automático habilitado · aguardando entrada DI1 → DI4."
+            return "Modo automático habilitado · aguardando DI1 ou pedal DI3."
         return "Leitura desabilitada ou aguardando conexões operacionais."
 
     def _active_summary(self) -> TagLookupSessionSummary:
@@ -150,6 +151,15 @@ class OperationalBridge(QObject):
     operationTitle = Property(str, _operation_title, notify=changed)
     operationDescription = Property(str, _operation_description, notify=changed)
     foundCount = Property(int, lambda self: self._active_summary().total, notify=changed)
+    identifiedCount = Property(
+        int,
+        lambda self: (
+            self._simulation_summary.total + self._simulation_summary.extra_box_total
+            if self._simulation_presenting
+            else self._identified_count
+        ),
+        notify=changed,
+    )
     extraBoxCount = Property(
         int, lambda self: self._active_summary().extra_box_total, notify=changed
     )
@@ -209,12 +219,15 @@ class OperationalBridge(QObject):
         elif isinstance(value, TagLookupSessionStarted):
             self._session_id = value.session_id
             self._summary.reset()
+            self._identified_count = 0
             self._model.start_session(value.session_id)
             self._message = ""
             self._audio.begin_session()
         elif isinstance(value, TagLookupChanged):
             if value.session_id != self._session_id:
                 return
+            if value.result.status is TagLookupStatus.CONSULTING:
+                self._identified_count = max(self._identified_count, value.identified_count)
             self._summary.update(value.result)
             self._model.upsert(value.result, value.session_id)
             if value.result.status is TagLookupStatus.FOUND:

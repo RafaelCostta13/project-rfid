@@ -201,18 +201,22 @@ def test_worker_serializes_commands_and_releases_port_on_disconnect() -> None:
     assert events[-1].kind is DiagnosticEventKind.DISCONNECTED
 
 
-def test_polling_failure_disconnects_and_forgets_states() -> None:
+def test_polling_failure_disconnects_and_forgets_states(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO")
     events: list[DiagnosticEvent] = []
     port = FakePort()
     port.fail_poll = True
     service = WaveshareDiagnosticService(lambda: settings(), events.append, lambda config: port)
 
-    service.connect()
+    service.connect_automatic()
     wait_for(events, DiagnosticEventKind.DISCONNECTED)
     service.close()
 
     assert port.closed
     assert events[-1].message == "Comunicação com a Waveshare perdida."
+    assert "waveshare_poll_summary" in caplog.text
+    assert "requested_operational_ms=20.0" in caplog.text
+    assert "failures=1" in caplog.text
 
 
 def test_connection_failure_closes_port_without_showing_connected() -> None:

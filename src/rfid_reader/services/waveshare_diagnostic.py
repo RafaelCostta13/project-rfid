@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -23,6 +24,7 @@ from rfid_reader.services.automatic_inventory import AutomaticInventoryControlle
 
 LOGGER = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = 0.5
+OPERATIONAL_POLL_INTERVAL_SECONDS = 0.02
 PORT_REQUIRED_MESSAGE = "Configure a porta COM da Waveshare antes de iniciar o teste."
 
 
@@ -197,6 +199,58 @@ class WaveshareDiagnosticService:
         port: DiagnosticPort | None = None
         message = ""
         connected = False
+        previous_poll: float | None = None
+        interval_total = interval_max = duration_total = duration_max = 0.0
+        polls = intervals = failures = timeouts = 0
+        last_summary = time.monotonic()
+
+        def log_poll_summary() -> None:
+            if polls or failures:
+                LOGGER.info(
+                    "waveshare_poll_summary requested_operational_ms=%.1f polls=%s "
+                    "interval_mean_ms=%.3f interval_max_ms=%.3f modbus_mean_ms=%.3f "
+                    "modbus_max_ms=%.3f failures=%s timeouts=%s retries=0",
+                    OPERATIONAL_POLL_INTERVAL_SECONDS * 1000,
+                    polls,
+                    interval_total * 1000 / intervals if intervals else 0.0,
+                    interval_max * 1000,
+                    duration_total * 1000 / polls if polls else 0.0,
+                    duration_max * 1000,
+                    failures,
+                    timeouts,
+                )
+
+        def read_inputs(current_port: DiagnosticPort, operational: bool) -> tuple[bool, ...]:
+            nonlocal previous_poll, interval_total, interval_max, intervals
+            nonlocal duration_total, duration_max, polls, failures, timeouts, last_summary
+            if not operational:
+                previous_poll = None
+                return current_port.read_inputs()
+            started = time.monotonic()
+            if previous_poll is not None:
+                interval = started - previous_poll
+                interval_total += interval
+                interval_max = max(interval_max, interval)
+                intervals += 1
+            previous_poll = started
+            try:
+                result = current_port.read_inputs()
+            except WaveshareTimeoutError:
+                failures += 1
+                timeouts += 1
+                raise
+            except Exception:
+                failures += 1
+                raise
+            duration = time.monotonic() - started
+            duration_total += duration
+            duration_max = max(duration_max, duration)
+            polls += 1
+            if time.monotonic() - last_summary >= 60.0:
+                log_poll_summary()
+                last_summary = time.monotonic()
+            return result
+
         self._serial_gate.acquire()
         try:
             if self._stop.is_set():
@@ -229,10 +283,12 @@ class WaveshareDiagnosticService:
                     automatic = self._operational and not self._manual_control
                 try:
                     channel, enabled = self._commands.get(
-                        timeout=0.05 if automatic else POLL_INTERVAL_SECONDS
+                        timeout=OPERATIONAL_POLL_INTERVAL_SECONDS
+                        if automatic
+                        else POLL_INTERVAL_SECONDS
                     )
                 except queue.Empty:
-                    inputs = port.read_inputs()
+                    inputs = read_inputs(port, automatic)
                     self._listener(DiagnosticEvent(DiagnosticEventKind.INPUTS, states=inputs))
                     self._update_automatic(port, inputs)
                     continue
@@ -243,7 +299,7 @@ class WaveshareDiagnosticService:
                 with self._guard:
                     automatic = self._operational and not self._manual_control
                 if automatic:
-                    inputs = port.read_inputs()
+                    inputs = read_inputs(port, automatic)
                     self._listener(DiagnosticEvent(DiagnosticEventKind.INPUTS, states=inputs))
                     self._update_automatic(port, inputs)
                     if channel <= 3:
@@ -285,6 +341,7 @@ class WaveshareDiagnosticService:
             LOGGER.exception("waveshare_diagnostic_unexpected_failed port=%s", settings.serial_port)
             message = "Falha inesperada na comunicação com a Waveshare."
         finally:
+            log_poll_summary()
             with self._guard:
                 operational = self._operational
             if self._automatic is not None and operational:

@@ -89,7 +89,7 @@ rfid-reader --env-file .env
 
 A aplicação mantém uma única sessão LLRP com o FX9600 e a reutiliza tanto para o
 status quanto para o inventário. Na página **Start**, **Iniciar leitura** habilita
-o automático e aguarda DI1 → DI4; **Parar leitura** cancela o ciclo. A tabela apresenta
+o automático e aguarda DI1 ou o pedal DI3; **Parar leitura** cancela o ciclo. A tabela apresenta
 somente EPCs confirmados pela base, com status, cliente, nota fiscal, volume,
 pedido e doca quando disponibilizados pelo Backend. EPCs não encontrados,
 inválidos ou afetados por erro técnico não criam linhas. Campos ausentes ou nulos
@@ -150,29 +150,30 @@ Na página **Start**, **Iniciar leitura** habilita o modo automático, mas não
 inicia imediatamente o inventário.
 DI1, DI2, DI4 e DI5 `True` significa **DI ATIVA / FEIXE LIVRE**; `False` significa
 **DI DESATIVADA / FEIXE INTERROMPIDO**, conforme o código físico validado.
-A primeira amostra apenas estabelece o estado inicial. Com os quatro feixes
-livres, DI1 `True → False` arma a entrada e uma borda posterior em DI4 inicia
-o inventário. DI2 deve estar livre para iniciar. CH2 só liga após confirmação
-do início pelo Zebra; acionamentos simultâneos não comprovam a ordem.
+A primeira amostra estabelece o estado inicial. Uma interrupção de DI1 inicia
+diretamente o inventário; DI4 e DI5 permanecem disponíveis no diagnóstico.
+DI2 deve estar livre para iniciar. CH2 liga após confirmação pelo Zebra.
 
-O modo automático consulta as entradas a cada 50 ms, além do tempo das operações
-Modbus, sem debounce artificial nos sensores. DI5 seguido de DI2 encerra
-normalmente a passagem; o acionamento isolado de cada um é ignorado para esse fim.
-Um timer independente limita cada janela a 60 segundos e é cancelado na parada.
+O modo automático aguarda 20 ms entre consultas, além do tempo das operações
+Modbus e processamento. DI2 encerra a passagem. Um timer limita cada janela a 20 segundos.
 Cada timer tem uma geração, impedindo interferência em ciclos novos.
 As latências físicas incluem polling, comunicação serial e confirmação LLRP.
+O log `waveshare_poll_summary` resume intervalos e duração das consultas
+operacionais, falhas e timeouts; os valores reais precisam ser avaliados com
+a placa conectada e não garantem captura de todos os pulsos.
 
 | Condição | RFID | CH1 | CH2 | CH3 |
 |---|---|---|---|---|
 | Sistema apto, aguardando DI1 | OFF | ON | OFF | OFF |
-| Ciclo iniciado por DI1 → DI4 | ON | OFF | ON | OFF |
+| Ciclo iniciado por DI1 ou DI3 | ON | OFF | ON | OFF |
 | Internet, RFID ou Sistema indisponível, com Waveshare acessível | OFF | OFF | OFF | ON |
 | Waveshare indisponível | OFF | estado desconhecido | estado desconhecido | estado desconhecido |
 
-O timeout para o inventário, mas preserva a passagem para reabertura por DI3 ou
-encerramento por DI5 → DI2. DI3 usa o debounce existente e, ao reabrir, invalida
-um DI5 pendente; um novo DI5 → DI2 será necessário. Uma nova passagem exige outra
-sequência DI1 → DI4. Os relés são desligados antes de ligar o próximo indicador,
+O timeout para o inventário e encerra automaticamente uma passagem sem EPCs
+válidos. Com um ou mais EPCs identificados, preserva a passagem para reabertura
+por DI3 ou encerramento por DI2. DI3 usa o debounce existente e também pode iniciar uma
+nova passagem quando o sistema está pronto. Uma passagem automática posterior
+exige novo ciclo dos sensores. Os relés são desligados antes de ligar o próximo indicador,
 e seus estados só são apresentados após confirmação. CH4–CH8 não são escritos
 pela automação.
 
@@ -189,8 +190,10 @@ acessível. Após a recuperação, CH1 volta a indicar disponibilidade sem inici
 uma leitura por si só.
 
 O processamento de EPCs, consultas, deduplicação, tabela e contador reutilizam
-a sessão existente. Validação física ainda necessária no Windows: reproduzir
-feixes livres → DI1 → DI4 → DI5 → DI2, verificar pedal, timeout e desconexões
+a sessão existente. A tela mostra EPCs únicos identificados após o filtro, antes
+da classificação, incluindo Extra box e consultas ainda pendentes. Validação física
+ainda necessária no Windows: reproduzir
+feixes livres → DI1 → DI2, verificar pedal, timeout e desconexões
 com Waveshare/FX9600 reais. Testes automatizados usam fakes
 e não comprovam funcionamento no equipamento.
 
@@ -312,9 +315,11 @@ python -m rfid_reader.cli --env-file .env
 
 `rfid-reader`, `rfid-reader show` e `rfid-reader-qt` abrem a operação Qt.
 `--operate` continua aceito como opção explícita. Iniciar Leitura habilita o modo
-automático e aguarda DI1 → DI4; a passagem termina por DI5 → DI2 ou Stop,
-e o timeout de 60 segundos permite complementação por DI3. A tabela e o contador recebem somente EPCs
-encontrados e registrados pelo Backend, com deduplicação por sessão. POSTs
+automático e aguarda DI1 ou DI3; a passagem termina por DI2 ou Stop,
+e o timeout de 20 segundos encerra passagens vazias ou permite complementação
+por DI3 quando há EPCs identificados. Os cards e a tabela
+apresentam a classificação do Backend; o label contabiliza os EPCs únicos
+identificados após o filtro, inclusive antes da resposta. POSTs
 não são repetidos automaticamente em timeout. As configurações e o diagnóstico
 DI1–DI5/CH1–CH8 usam os mesmos serviços e a mesma porta serial da operação.
 CH1–CH3 ficam protegidos contra comandos manuais durante o modo automático.
