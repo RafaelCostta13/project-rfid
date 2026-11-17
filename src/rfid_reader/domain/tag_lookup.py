@@ -102,6 +102,7 @@ class TagLookupChanged:
     session_id: int
     key: TagLookupKey
     result: TagLookupResult
+    identified_count: int = 0
 
 
 TagLookupEvent = TagLookupSessionStarted | TagLookupChanged

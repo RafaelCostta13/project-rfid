@@ -1,3 +1,4 @@
+import threading
 from datetime import UTC, datetime
 
 from rfid_reader.domain import (
@@ -130,6 +131,38 @@ def test_stop_blocks_late_tags() -> None:
     assert reader.stop_calls == 1
     assert not any(isinstance(event, TagReceived) and event.tag.epc == "LATE" for event in events)
     assert events[-1] == InventoryStatusChanged(InventoryStatus.STOPPED)
+
+
+def test_stop_waits_for_accepted_tag_and_rejects_old_callback_after_restart() -> None:
+    reader = FakeReader()
+    entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
+    events: list[InventoryEvent] = []
+
+    def listener(event: InventoryEvent) -> None:
+        if isinstance(event, TagReceived):
+            entered.set()
+            assert release.wait(3)
+        events.append(event)
+
+    service = ManualInventoryService(reader, listener)
+    assert service.start()
+    old_callback = reader.tag_callback
+    worker = threading.Thread(target=lambda: reader.emit("E28011700001"))
+    worker.start()
+    assert entered.wait(1)
+    stopper = threading.Thread(target=lambda: (service.stop(), stopped.set()))
+    stopper.start()
+    try:
+        assert not stopped.wait(0.05)
+    finally:
+        release.set()
+        worker.join(2)
+        stopper.join(2)
+    assert stopped.is_set()
+    assert service.start()
+    assert old_callback is not None
+    old_callback(TagRead("E28011700002", "fake", 1, datetime.now(UTC)))
+    assert [event.tag.epc for event in events if isinstance(event, TagReceived)] == ["E28011700001"]
 
 
 def test_connection_loss_interrupts_reading_with_error() -> None:

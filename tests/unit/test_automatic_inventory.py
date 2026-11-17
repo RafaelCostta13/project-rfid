@@ -12,6 +12,7 @@ class Inventory:
     def __init__(self) -> None:
         self.status = InventoryStatus.STOPPED
         self.starts = 0
+        self.resumes = 0
         self.stops = 0
         self.fail_start = False
         self.fail_stop = False
@@ -27,12 +28,13 @@ class Inventory:
         return not self.fail_stop
 
     def resume(self) -> bool:
+        self.resumes += 1
         return self.start()
 
 
 class Timer:
     def __init__(self, seconds: float, callback: Callable[[], None]) -> None:
-        assert seconds == 60
+        assert seconds == 20
         self.callback = callback
         self.started = False
         self.cancelled = False
@@ -52,12 +54,14 @@ class Rig:
         self.calls: list[tuple[int, bool]] = []
         self.mode_events: list[bool] = []
         self.cycle_finished: list[str] = []
+        self.identified_count = 1
         self.previous_beams: tuple[bool, bool] | None = None
         self.controller = AutomaticInventoryController(
             self.inventory,
             self.timer,
             self.mode_events.append,
             self.cycle_finished.append,
+            lambda: self.identified_count,
         )
         self.set_all_statuses(ConnectionStatus.CONNECTED)
         assert self.controller.enable()
@@ -116,26 +120,166 @@ class SequenceRig:
         self.set(2, False)
 
 
-def test_entry_requires_ordered_distinct_edges(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_di5_never_blocks_entry_or_ends_passage(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
+    seq = SequenceRig(clock)
+    seq.set(5, False)
+    seq.enter()
+    assert seq.rig.inventory.starts == 1
+    seq.set(5, True)
+    assert seq.rig.inventory.stops == 0
+    seq.set(2, False)
+    assert seq.rig.inventory.stops == 1
+
+
+def test_di4_and_di5_do_not_control_passage(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
+    seq = SequenceRig(clock)
+    seq.set(4, False)
+    seq.set(5, False)
+    assert seq.rig.inventory.starts == 0
+    seq.set(1, False)
+    assert seq.rig.inventory.starts == 1
+    seq.set(4, True)
+    seq.set(5, True)
+    assert seq.rig.inventory.stops == 0
+    seq.set(2, False)
+    assert seq.rig.inventory.stops == 1
+
+
+def test_empty_timeout_finishes_once_and_requires_new_di1_edge() -> None:
+    rig = Rig()
+    rig.identified_count = 0
+    rig.update(True, True)
+    rig.update(False, True)
+    rig.timers[-1].callback()
+    rig.update(False, True)
+    assert rig.cycle_finished == ["timeout_sem_epcs"]
+    assert rig.inventory.starts == rig.inventory.stops == 1
+    assert rig.relays == {1: True, 2: False, 3: False}
+    rig.update(False, False)
+    assert rig.cycle_finished == ["timeout_sem_epcs"]
+    rig.update(True, True)
+    rig.update(False, True)
+    assert rig.inventory.starts == 2
+
+
+def test_exit_and_empty_timeout_concurrently_finish_only_once() -> None:
+    rig = Rig()
+    rig.identified_count = 0
+    rig.update(True, True)
+    rig.update(False, True)
+    barrier = threading.Barrier(3)
+
+    def expire() -> None:
+        barrier.wait()
+        rig.timers[0].callback()
+
+    def exit_sensor() -> None:
+        barrier.wait()
+        rig.controller.update((False, False, False, True, True), rig.relay)
+
+    threads = [threading.Thread(target=expire), threading.Thread(target=exit_sensor)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(2)
+        assert not thread.is_alive()
+    assert rig.inventory.stops == 1
+    assert len(rig.cycle_finished) == 1
+    assert rig.cycle_finished[0] in {"timeout_sem_epcs", "exit_sensor_interrupted"}
+
+
+def test_empty_manual_passage_starts_new_session_after_pedal_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
+    seq = SequenceRig(clock)
+    seq.rig.identified_count = 0
+    seq.set(3, True)
+    seq.sample()
+    seq.rig.timers[-1].callback()
+    seq.sample()
+    assert seq.rig.inventory.starts == 1
+    assert seq.rig.cycle_finished == ["timeout_sem_epcs"]
+    seq.set(3, False)
+    seq.sample()
+    seq.set(3, True)
+    seq.sample()
+    assert seq.rig.inventory.starts == 2
+    assert seq.rig.inventory.resumes == 0
+
+
+def test_pedal_during_reading_does_not_restart_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
+    seq = SequenceRig(clock)
+    seq.set(1, False)
+    seq.set(3, True)
+    seq.sample()
+    assert seq.rig.inventory.starts == 1
+    assert len(seq.rig.timers) == 1
+    assert not seq.rig.timers[0].cancelled
+
+
+def test_pedal_starts_new_passage_and_does_not_repeat_while_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
+    seq = SequenceRig(clock)
+    seq.set(3, True)
+    seq.sample()
+    assert seq.rig.inventory.starts == 1
+    seq.sample()
+    assert seq.rig.inventory.starts == 1
+    seq.set(2, False)
+    seq.sample()
+    assert seq.rig.inventory.stops == 1
+    seq.set(2, True)
+    seq.set(3, False)
+    seq.sample()
+    seq.set(3, True)
+    seq.sample()
+    assert seq.rig.inventory.starts == 2
+
+
+def test_simultaneous_entry_requires_new_cycle_after_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
+    seq = SequenceRig(clock)
+    seq.inputs[0] = seq.inputs[3] = False
+    seq.sample()
+    assert seq.rig.inventory.starts == 1
+    seq.set(2, False)
+    seq.set(2, True)
+    seq.sample()
+    assert seq.rig.inventory.starts == 1
+    seq.set(1, True)
+    seq.set(4, True)
+    seq.inputs[0] = seq.inputs[3] = False
+    seq.sample()
+    assert seq.rig.inventory.starts == 2
+
+
+def test_entry_accepts_both_sensors_in_reverse_order(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = [0.0]
     monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
     seq = SequenceRig(clock)
     seq.set(4, False)
     seq.set(1, False)
-    assert seq.rig.inventory.starts == 0 and not seq.rig.timers
-    assert seq.rig.relays == {1: True, 2: False, 3: False}
-    seq.set(4, True)
-    seq.set(4, False)
     assert seq.rig.inventory.starts == 1 and seq.rig.timers[0].started
     assert seq.rig.relays == {1: False, 2: True, 3: False}
     seq.sample()
     assert seq.rig.inventory.starts == 1
 
 
-@pytest.mark.parametrize("channel", [2, 5])
-def test_exit_event_invalidates_incomplete_entry(
-    channel: int, monkeypatch: pytest.MonkeyPatch
-) -> None:
+@pytest.mark.parametrize("channel", [2])
+def test_exit_ends_direct_entry_without_di4(channel: int, monkeypatch: pytest.MonkeyPatch) -> None:
     clock = [0.0]
     monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
     seq = SequenceRig(clock)
@@ -143,7 +287,8 @@ def test_exit_event_invalidates_incomplete_entry(
     seq.set(channel, False)
     seq.set(channel, True)
     seq.set(4, False)
-    assert seq.rig.inventory.starts == 0 and not seq.rig.timers
+    assert seq.rig.inventory.starts == 1
+    assert seq.rig.inventory.stops == 1
 
 
 def test_initially_interrupted_four_sensors_do_not_create_sequences() -> None:
@@ -165,7 +310,7 @@ def test_incomplete_sample_is_reported_as_communication_failure() -> None:
     assert rig.inventory.starts == 0
 
 
-def test_entry_and_exit_simultaneous_edges_do_not_imply_order(
+def test_entry_and_exit_simultaneous_edges_are_handled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = [0.0]
@@ -173,28 +318,21 @@ def test_entry_and_exit_simultaneous_edges_do_not_imply_order(
     seq = SequenceRig(clock)
     seq.inputs[0] = seq.inputs[3] = False
     seq.sample()
-    assert seq.rig.inventory.starts == 0
-    seq.inputs[0] = seq.inputs[3] = True
-    seq.sample()
-    seq.enter()
+    assert seq.rig.inventory.starts == 1
     seq.inputs[1] = seq.inputs[4] = False
     seq.sample()
-    assert seq.rig.inventory.stops == 0
-    seq.inputs[1] = seq.inputs[4] = True
-    seq.sample()
-    seq.exit()
     assert seq.rig.inventory.stops == 1
     assert seq.rig.cycle_finished == ["exit_sensor_interrupted"]
 
 
-def test_repeated_di1_does_not_cancel_previously_armed_entry(
+def test_repeated_di1_does_not_restart_active_inventory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = [0.0]
     monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
     seq = SequenceRig(clock)
     seq.set(1, False)
-    assert seq.rig.inventory.starts == 0
+    assert seq.rig.inventory.starts == 1
     seq.set(1, True)
     seq.inputs[0] = seq.inputs[3] = False
     seq.sample()
@@ -204,17 +342,13 @@ def test_repeated_di1_does_not_cancel_previously_armed_entry(
     assert seq.rig.inventory.starts == 1
 
 
-def test_exit_requires_new_di2_edge_after_di5(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_di2_ends_passage_without_di5(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = [0.0]
     monkeypatch.setattr("rfid_reader.services.automatic_inventory.time.monotonic", lambda: clock[0])
     seq = SequenceRig(clock)
     seq.enter()
     seq.set(2, False)
     seq.set(5, False)
-    assert seq.rig.inventory.stops == 0
-    assert seq.rig.relays == {1: False, 2: True, 3: False}
-    seq.set(2, True)
-    seq.set(2, False)
     assert seq.rig.inventory.stops == 1
     assert seq.rig.relays == {1: True, 2: False, 3: False}
 
@@ -270,10 +404,6 @@ def test_timeout_reopen_invalidates_pending_exit_and_preserves_session(
     seq.sample()
     assert seq.rig.inventory.starts == 2 and len(seq.rig.timers) == 2
     seq.set(2, False)
-    assert seq.rig.inventory.stops == 1
-    seq.set(2, True)
-    seq.set(5, True)
-    seq.exit()
     assert seq.rig.inventory.stops == 2
     assert seq.rig.cycle_finished == ["exit_sensor_interrupted"]
     seq.set(3, False)
@@ -304,7 +434,7 @@ def test_timeout_valid_exit_and_stop_clear_pending_sequences(
     assert seq.rig.controller.enable()
     seq.sample()
     seq.set(4, False)
-    assert seq.rig.inventory.starts == 0
+    assert seq.rig.inventory.starts == 1
 
 
 def test_exit_started_before_timeout_finishes_after_timeout(
@@ -364,7 +494,7 @@ def test_full_cycle_repeated_samples_and_old_timer() -> None:
     assert rig.inventory.status is InventoryStatus.READING
 
 
-@pytest.mark.parametrize("initial", [(False, True), (False, False), (True, False)])
+@pytest.mark.parametrize("initial", [(False, True), (False, False)])
 def test_initial_sample_is_not_an_edge(initial: tuple[bool, bool]) -> None:
     rig = Rig()
     rig.update(*initial)
@@ -434,6 +564,8 @@ def test_zebra_failures_never_leave_yellow_indicator_on(failure: str) -> None:
         rig.inventory.status = InventoryStatus.ERROR
     rig.update(False, False)
     assert not rig.relays[2]
+    if failure != "disconnect":
+        assert rig.relays == {1: False, 2: False, 3: True}
 
 
 def test_manual_controls_and_waveshare_shutdown_cancel_cycle() -> None:
@@ -487,9 +619,8 @@ def test_timer_stops_rfid_while_relay_confirmation_is_blocked() -> None:
             assert release.wait(2)
         return rig.relay(channel, state)
 
-    rig.controller.update((False, True, False, True, True), rig.relay)
     thread = threading.Thread(
-        target=lambda: rig.controller.update((False, True, False, False, True), relay)
+        target=lambda: rig.controller.update((False, True, False, True, True), relay)
     )
     thread.start()
     try:

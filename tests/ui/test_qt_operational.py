@@ -149,6 +149,8 @@ def test_full_cycle_updates_qml_table_counter_and_preserves_relays(rig: Rig) -> 
     wait_for(lambda: rig.bridge.automaticEnabled)
     assert rig.reader.starts == 0
     rig.start_cycle()
+    assert "saída DI2" in rig.bridge.operationDescription
+    assert "20 segundos" in rig.bridge.operationDescription
     wait_for(lambda: rig.port.relays[:3] == [False, True, False])
     assert rig.timers[0].started
     thread_ids: list[QThread] = []
@@ -192,6 +194,7 @@ def test_simulation_isolated_from_runtime_and_restores_presentation(rig: Rig) ->
         assert rig.bridge.simulateExtraBox()
     assert rig.bridge.foundCount == rig.bridge.simulationFoundCount == 10
     assert rig.bridge.extraBoxCount == rig.bridge.simulationExtraBoxCount == 5
+    assert rig.bridge.identifiedCount == 15
     assert rig.bridge.tagModel.rowCount() == rig.bridge.simulationTagModel.rowCount() == 15
     assert rig.backend.count("GET") == rig.backend.count("POST") == 0
     assert rig.reader.starts == 0
@@ -334,6 +337,25 @@ def test_mapping_reservation_blocks_queued_automatic_start(
     wait_for(lambda: not rig.runtime.antenna_mapping_reserved)
 
 
+def test_start_shows_ten_rows_and_identified_label(rig: Rig) -> None:
+    engine, window = create_engine(rig.bridge, rig.configuration, diagnostic_bridge=rig.bridge)
+    try:
+        window.resize(1366, 768)
+        window.show()
+        QTest.qWait(100)
+        table = window.findChild(QObject, "inventoryTable")
+        viewport = window.findChild(QObject, "tagTable")
+        label = window.findChild(QObject, "identifiedCountLabel")
+        assert table is not None and viewport is not None and label is not None
+        assert viewport.property("height") >= 10 * table.property("tableRowHeight")
+        assert label.property("text") == "EPCs identificados: 0"
+        assert rig.bridge.tagModel.columnCount() == 7
+    finally:
+        window.close()
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 def test_simulator_modal_shares_metrics_and_table_model(rig: Rig) -> None:
     messages: list[str] = []
     handler = qInstallMessageHandler(lambda kind, context, message: messages.append(message))
@@ -375,6 +397,7 @@ def test_get_failure_or_missing_epc_never_posts_or_counts(rig: Rig, status: int 
     else:
         QTest.qWait(50)
     assert rig.backend.count("POST") == rig.bridge.foundCount == 0
+    assert rig.bridge.identifiedCount == 1
     assert rig.bridge.extraBoxCount == (1 if status == 404 else 0)
     rig.reader.emit()
     QTest.qWait(20)
@@ -383,6 +406,17 @@ def test_get_failure_or_missing_epc_never_posts_or_counts(rig: Rig, status: int 
         wait_for(lambda: "consultar" in rig.bridge.operationDescription)
     else:
         assert "consultar" not in rig.bridge.operationDescription
+
+
+def test_identified_count_updates_before_backend_response(rig: Rig) -> None:
+    rig.backend.block = "GET"
+    rig.start_cycle()
+    rig.reader.emit()
+    wait_for(rig.backend.entered.is_set)
+    wait_for(lambda: rig.bridge.identifiedCount == 1)
+    assert rig.bridge.foundCount == rig.bridge.extraBoxCount == 0
+    rig.backend.release.set()
+    wait_for(lambda: rig.bridge.foundCount == 1)
 
 
 @pytest.mark.parametrize("status", [200, 404])
@@ -394,6 +428,7 @@ def test_multiple_antennas_process_epc_once_until_new_session(rig: Rig, status: 
     for session in (1, 2):
         rig.start_cycle()
         assert rig.bridge.foundCount == rig.bridge.extraBoxCount == 0
+        assert rig.bridge.identifiedCount == 0
         rig.reader.emit("ABCDEF123456", antenna_id=2)
         for antenna in (1, 2) * 10:
             rig.reader.emit(" " + EPC.lower() + " ", antenna_id=antenna)
@@ -402,6 +437,7 @@ def test_multiple_antennas_process_epc_once_until_new_session(rig: Rig, status: 
         QTest.qWait(40)
         assert rig.bridge.foundCount == expected_found
         assert rig.bridge.extraBoxCount == expected_extra
+        assert rig.bridge.identifiedCount == 1
         assert rig.bridge.tagModel.rowCount() == 1
         assert rig.backend.count("GET") == session
         assert rig.backend.count("POST") == expected_posts * session
@@ -463,6 +499,7 @@ def test_old_post_response_does_not_update_new_session(rig: Rig) -> None:
     rig.start_cycle()
     rig.reader.emit()
     wait_for(rig.backend.entered.is_set)
+    wait_for(lambda: rig.bridge.identifiedCount == 1)
     rig.end_cycle()
     rig.start_cycle()
     rig.backend.release.set()
@@ -487,7 +524,7 @@ def test_post_finishing_after_stop_updates_only_current_session(rig: Rig) -> Non
     assert rig.backend.count("POST") == 1
 
 
-def test_four_sensor_cycle_preserves_epcs_across_pedal_reopening(rig: Rig) -> None:
+def test_cycle_preserves_epcs_across_pedal_reopening(rig: Rig) -> None:
     rig.start_cycle()
     rig.reader.emit()
     wait_for(lambda: rig.bridge.foundCount == 1)
@@ -498,11 +535,13 @@ def test_four_sensor_cycle_preserves_epcs_across_pedal_reopening(rig: Rig) -> No
     wait_for(lambda: rig.reader.reading)
     wait_for(lambda: rig.bridge.operationState == "reading")
     assert rig.bridge.foundCount == 1
+    assert rig.bridge.identifiedCount == 1
     rig.reader.emit()
     QTest.qWait(100)
     assert rig.backend.count("GET") == rig.backend.count("POST") == 1
     rig.reader.emit("E280691500005029EEA6A276")
     wait_for(lambda: rig.bridge.foundCount == 2)
+    assert rig.bridge.identifiedCount == 2
     assert rig.backend.count("GET") == rig.backend.count("POST") == 2
     rig.end_cycle()
     assert rig.bridge.foundCount == 2
@@ -520,6 +559,93 @@ def test_timeout_and_backend_loss_stop_inventory(rig: Rig) -> None:
     wait_for(lambda: rig.bridge.operationState == "error")
     rig.backend.system = "ok"
     wait_for(lambda: rig.bridge.operationState == "ok")
+
+
+def test_empty_timeout_closes_and_next_di1_starts_new_session(rig: Rig) -> None:
+    rig.start_cycle()
+    first_session = rig.runtime.lookup.session_id
+    rig.timers[-1].callback()
+    wait_for(lambda: not rig.reader.reading)
+    wait_for(lambda: rig.port.relays[:3] == [True, False, False])
+    assert rig.bridge.identifiedCount == 0
+    assert rig.backend.count("GET") == rig.backend.count("POST") == 0
+    rig.start_cycle()
+    assert rig.runtime.lookup.session_id == first_session + 1
+
+
+def test_timeout_uses_identified_epc_even_with_backend_pending(rig: Rig) -> None:
+    rig.backend.block = "GET"
+    rig.start_cycle()
+    first_session = rig.runtime.lookup.session_id
+    rig.reader.emit()
+    wait_for(rig.backend.entered.is_set)
+    wait_for(lambda: rig.bridge.identifiedCount == 1)
+    rig.timers[-1].callback()
+    rig.port.inputs = (False, True, True, False, True)
+    wait_for(lambda: rig.reader.reading)
+    assert rig.runtime.lookup.session_id == first_session
+    assert rig.bridge.identifiedCount == 1
+    rig.backend.release.set()
+    wait_for(lambda: rig.bridge.foundCount == 1)
+
+
+def test_timeout_with_extra_box_preserves_session(rig: Rig) -> None:
+    rig.backend.get_status = 404
+    rig.start_cycle()
+    first_session = rig.runtime.lookup.session_id
+    rig.reader.emit()
+    wait_for(lambda: rig.bridge.extraBoxCount == 1)
+    rig.timers[-1].callback()
+    rig.port.inputs = (False, True, True, False, True)
+    wait_for(lambda: rig.reader.reading)
+    assert rig.runtime.lookup.session_id == first_session
+    assert rig.bridge.identifiedCount == 1
+    assert rig.backend.count("POST") == 0
+
+
+def test_timeout_waits_for_tag_accepted_before_stop(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig.start_cycle()
+    session = rig.runtime.lookup.session_id
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original_submit = rig.runtime.lookup.submit
+
+    def delayed_submit(tag: TagRead) -> bool:
+        entered.set()
+        assert release.wait(3)
+        return original_submit(tag)
+
+    monkeypatch.setattr(rig.runtime.lookup, "submit", delayed_submit)
+    reader_thread = threading.Thread(target=rig.reader.emit)
+    timer_thread = threading.Thread(target=lambda: (rig.timers[-1].callback(), finished.set()))
+    reader_thread.start()
+    assert entered.wait(1)
+    timer_thread.start()
+    try:
+        assert not finished.wait(0.05)
+    finally:
+        release.set()
+        reader_thread.join(2)
+        timer_thread.join(2)
+    assert finished.is_set()
+    wait_for(lambda: rig.bridge.identifiedCount == 1)
+    rig.port.inputs = (False, True, True, False, True)
+    wait_for(lambda: rig.reader.reading)
+    assert rig.runtime.lookup.session_id == session
+
+
+def test_rejected_epcs_do_not_prevent_empty_timeout(rig: Rig) -> None:
+    rig.runtime.epc_filter_configuration.save(True, [EPC[:6]])
+    rig.start_cycle()
+    rig.reader.emit("ABCDEF123456")
+    rig.reader.emit("invalid")
+    assert rig.bridge.identifiedCount == 0
+    first_session = rig.runtime.lookup.session_id
+    rig.timers[-1].callback()
+    rig.start_cycle()
+    assert rig.runtime.lookup.session_id == first_session + 1
+    assert rig.backend.count("GET") == rig.backend.count("POST") == 0
 
 
 def test_database_monitoring_remains_internal_without_changing_readiness(rig: Rig) -> None:
@@ -770,9 +896,6 @@ def test_slow_llrp_does_not_block_qt_slots_or_event_delivery(
     samples = rig.port.samples
     wait_for(lambda: rig.port.samples >= samples + 2)
     rig.port.inputs = (False, True, False, True, True)
-    samples = rig.port.samples
-    wait_for(lambda: rig.port.samples >= samples + 2)
-    rig.port.inputs = (False, True, False, False, True)
     wait_for(entered.is_set)
     # Uma resposta do executor pode chegar enquanto o controlador aguarda LLRP.
     rig.bridge.eventReceived.emit(RuntimeEvent("command", CommandFinished("start", True)))

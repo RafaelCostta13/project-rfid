@@ -28,6 +28,9 @@ class ManualInventoryService:
         self._reader = reader
         self._listener = listener
         self._lock = threading.Lock()
+        self._tag_condition = threading.Condition(self._lock)
+        self._tag_generation = 0
+        self._tags_in_flight = 0
         self._status = InventoryStatus.STOPPED
         self._accept_tags = False
         self._closed = False
@@ -51,6 +54,8 @@ class ManualInventoryService:
             else:
                 self._status = InventoryStatus.READING
                 self._accept_tags = False
+                self._tag_generation += 1
+                generation = self._tag_generation
                 status = self._status
                 should_start = True
 
@@ -59,7 +64,7 @@ class ManualInventoryService:
             return False
 
         try:
-            started = self._reader.start_inventory(self._on_tag)
+            started = self._reader.start_inventory(lambda tag: self._on_tag(tag, generation))
         except ReaderError:
             LOGGER.exception("manual_inventory_start_failed")
             started = False
@@ -85,11 +90,12 @@ class ManualInventoryService:
     def stop(self) -> bool:
         """Bloqueia novas tags antes de solicitar a parada ao reader."""
 
-        with self._lock:
+        with self._tag_condition:
             if self._status is not InventoryStatus.READING:
                 return False
             self._accept_tags = False
             self._status = InventoryStatus.STOPPED
+            self._tag_condition.wait_for(lambda: self._tags_in_flight == 0)
 
         try:
             if not self._reader.stop_inventory():
@@ -105,11 +111,21 @@ class ManualInventoryService:
         self._emit(InventoryStatusChanged(InventoryStatus.STOPPED))
         return True
 
-    def _on_tag(self, tag: TagRead) -> None:
-        with self._lock:
-            if not self._accept_tags or self._status is not InventoryStatus.READING:
+    def _on_tag(self, tag: TagRead, generation: int) -> None:
+        with self._tag_condition:
+            if (
+                not self._accept_tags
+                or self._status is not InventoryStatus.READING
+                or generation != self._tag_generation
+            ):
                 return
-        self._emit(TagReceived(tag))
+            self._tags_in_flight += 1
+        try:
+            self._emit(TagReceived(tag))
+        finally:
+            with self._tag_condition:
+                self._tags_in_flight -= 1
+                self._tag_condition.notify_all()
 
     def _on_disconnected(self) -> None:
         with self._lock:

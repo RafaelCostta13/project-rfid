@@ -96,6 +96,12 @@ class TagLookupService:
         with self._lock:
             return self._session_id
 
+    @property
+    def identified_count(self) -> int:
+        """EPCs únicos aceitos na passagem, antes da classificação do backend."""
+        with self._lock:
+            return len(self._processed_epcs)
+
     def start_session(self) -> int:
         """Reinicia a deduplicação e invalida resultados da sessão anterior."""
 
@@ -168,6 +174,7 @@ class TagLookupService:
             # Reserva antes da fila/HTTP: callbacks concorrentes não duplicam passagem.
             self._processed_epcs.add(normalized_epc)
             session_id = self._session_id
+            identified_count = len(self._processed_epcs)
         LOGGER.info(
             "tag_read_received reader_id=%s antenna=%s epc=%s rssi=%s read_at=%s",
             tag.reader_id,
@@ -181,6 +188,7 @@ class TagLookupService:
             key,
             TagLookupStatus.CONSULTING,
             "",
+            identified_count,
         )
         try:
             self._queue.put_nowait(_LookupTask(session_id, key))
@@ -303,12 +311,14 @@ class TagLookupService:
         key: TagLookupKey,
         status: TagLookupStatus,
         message: str,
+        identified_count: int = 0,
     ) -> None:
         self._emit(
             TagLookupChanged(
                 session_id,
                 key,
                 TagLookupResult(key.epc, status, message),
+                identified_count,
             )
         )
 

@@ -27,6 +27,12 @@ Item {
                 countObjectName: "extraBoxCount"
             }
         }
+        AppText {
+            objectName: "identifiedCountLabel"
+            text: "EPCs identificados: " + page.uiBridge.identifiedCount
+            textStyle: "caption"
+            color: Theme.secondaryText
+        }
         Rectangle {
             color: Theme.surface
             radius: Theme.radius
@@ -53,6 +59,7 @@ Item {
                 }
                 AppText { text: "Etiquetas lidas"; textStyle: "caption"; color: Theme.secondaryText }
                 StyledTable {
+                    objectName: "inventoryTable"
                     tableModel: page.uiBridge.tagModel
                     Layout.fillWidth: true
                     Layout.fillHeight: true
